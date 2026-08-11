@@ -83,8 +83,6 @@ void FileBrowserActivity::onEnter() {
     basepath = "/";
     loadFiles();
   } else if (!root.isDirectory()) {
-    lockLongPressBack = mappedInput.isPressed(MappedInputManager::Button::Back);
-
     const std::string oldPath = basepath;
     basepath = FsHelpers::extractFolderPath(basepath);
     loadFiles();
@@ -189,17 +187,12 @@ bool FileBrowserActivity::removeDirFile(const std::string& fullPath) {
 void FileBrowserActivity::loop() {
   // Long press BACK (1s+) goes to root folder (Books mode only).
   // In firmware-pick mode we keep navigation simple: short Back = up dir / cancel.
-  if (mode == Mode::Books && mappedInput.isPressed(MappedInputManager::Button::Back) &&
-      mappedInput.getHeldTime() >= GO_HOME_MS && basepath != "/" && !lockLongPressBack) {
+  if (mode == Mode::Books && mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() >= GO_HOME_MS && basepath != "/") {
     basepath = "/";
     loadFiles();
     selectorIndex = 0;
     requestUpdate();
-    return;
-  }
-
-  if (lockLongPressBack && mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    lockLongPressBack = false;
     return;
   }
 
@@ -238,10 +231,6 @@ void FileBrowserActivity::loop() {
       const std::string fullPath = cleanBasePath + entry;
 
       auto handler = [this, fullPath](const ActivityResult& res) {
-        // The confirmation popup acts on button press; if that button is still
-        // held when we resume, swallow its release so it doesn't also act here
-        // (Back would go up a directory, Confirm would open the selection).
-        lockLongPressBack = mappedInput.isPressed(MappedInputManager::Button::Back);
         lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
         if (!res.isCancelled) {
           LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());

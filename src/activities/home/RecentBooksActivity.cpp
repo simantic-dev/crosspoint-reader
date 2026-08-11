@@ -48,29 +48,15 @@ void RecentBooksActivity::loop() {
   const int contentHeight =
       renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
-  // After a long-press has fired, swallow input until Confirm is physically released
-  // (so the release doesn't also open the book; re-arm only once the button is up).
-  if (longPressFired) {
-    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-      longPressFired = false;
-    }
-    return;
-  }
-
-  // Long-press Confirm on the selected book: prompt to remove it from the list.
-  // Fires when the hold times out while still held (firmware hold-to-act pattern,
-  // cf. FileBrowserActivity BACK long-press).
-  if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
-      mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
-    longPressFired = true;
-    promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
-    return;
-  }
-
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex < static_cast<int>(recentBooks.size())) {
-      LOG_DBG("RBA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
-      onSelectBook(recentBooks[selectorIndex].path);
+      const auto& selectedBook = recentBooks[selectorIndex];
+      if (mappedInput.getHeldTime() >= LONG_PRESS_MS) {
+        promptRemoveBook(selectedBook.path, selectedBook.title);
+      } else {
+        LOG_DBG("RBA", "Selected recent book: %s", selectedBook.path.c_str());
+        onSelectBook(selectedBook.path);
+      }
       return;
     }
   }

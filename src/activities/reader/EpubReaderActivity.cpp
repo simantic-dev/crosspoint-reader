@@ -486,13 +486,40 @@ void EpubReaderActivity::loop() {
     requestUpdate();
   }
 
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  if (confirmReleased) {
+    switch (SETTINGS.longPressMenuFunction) {
+      case CrossPointSettings::LP_MENU_BOOKMARK:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          addBookmark();
+          showBookmarkMessage = true;
+          bookmarkMessageTime = millis();
+          requestUpdate();
+          return;
+        }
+        break;
+      case CrossPointSettings::LP_MENU_KOSYNC:
+        if (mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS && launchKOReaderSync()) {
+          return;
+        }
+        break;
+      case CrossPointSettings::LP_MENU_DICTIONARY:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          openDictionaryWordSelect();
+          return;
+        }
+        break;
+      case CrossPointSettings::LP_MENU_DISABLED:
+      default:
+        break;
+    }
+  }
+
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
   // input. Anything it doesn't handle (e.g. long-press Back to the file browser) falls
   // through to the regular handlers below; page turns are absorbed by the end-of-book
-  // block. A Confirm release after a long-press function (bookmark/sync) fired is left
-  // to the regular Confirm handler below, which consumes it via ignoreNextConfirmRelease.
-  if (atEndOfBook && endOfBookOptions.menuActive() &&
-      !(ignoreNextConfirmRelease && mappedInput.wasReleased(MappedInputManager::Button::Confirm))) {
+  // block.
+  if (atEndOfBook && endOfBookOptions.menuActive()) {
     std::string openPath;
     switch (endOfBookOptions.handleMenuInput(mappedInput, &openPath)) {
       case EndOfBookOptions::Action::OpenBook:
@@ -515,52 +542,9 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  // Enter reader menu activity on short-press Confirm or a downward swipe from the top edge. A long-press
-  // that fired a bound function (bookmark or KOReader sync) sets ignoreNextConfirmRelease so the release
-  // following the hold does not also open the menu.
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
-    if (ignoreNextConfirmRelease) {
-      ignoreNextConfirmRelease = false;
-    } else {
-      openReaderMenu();
-    }
-  }
-
-  // Long-press Confirm runs the user-selected function (SETTINGS.longPressMenuFunction).
-  if (mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-    switch (SETTINGS.longPressMenuFunction) {
-      case CrossPointSettings::LP_MENU_BOOKMARK:
-        // Hold ~0.4s drops a bookmark at the current page.
-        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !showBookmarkMessage) {
-          addBookmark();
-          showBookmarkMessage = true;
-          ignoreNextConfirmRelease = true;  // Prevent accidental menu open after adding bookmark
-          bookmarkMessageTime = millis();
-          requestUpdate();
-        }
-        break;
-      case CrossPointSettings::LP_MENU_KOSYNC:
-        // Hold ~1s launches KOReader sync. If sync can't run (no credentials stored), fall
-        // through so the normal Confirm-release still opens the reader menu.
-        if (mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
-          if (launchKOReaderSync()) {
-            ignoreNextConfirmRelease = true;  // sync launched or error shown; suppress menu open
-            return;
-          }
-        }
-        break;
-      case CrossPointSettings::LP_MENU_DICTIONARY:
-        // Hold ~0.4s starts dictionary word selection on the current page.
-        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !showDictionaryMessage) {
-          ignoreNextConfirmRelease = true;  // Prevent menu open on the release that follows
-          openDictionaryWordSelect();
-          return;
-        }
-        break;
-      case CrossPointSettings::LP_MENU_DISABLED:
-      default:
-        break;
-    }
+  // Short Confirm opens the reader menu; long Confirm actions returned above.
+  if (confirmReleased || ReaderUtils::isTouchMenuGesture(mappedInput)) {
+    openReaderMenu();
   }
 
   // Short press Back restores position when viewing a footnote (takes priority over navigation)
