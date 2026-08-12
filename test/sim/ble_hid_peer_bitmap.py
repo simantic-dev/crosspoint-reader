@@ -198,13 +198,17 @@ class Peer:
             button = int(value) if value else PRESS_BUTTON
             pressed = DEVICE.report([(PAGE_BUTTON, button)])
             released = DEVICE.report(RELEASE)
+            # Append rather than replace: commands arriving faster than the
+            # timer drains them must all be delivered, or a test that presses
+            # twice in quick succession silently loses the first press.
             if name == "press":
-                self.queue = [pressed]
+                self.queue.append(pressed)
             elif name == "release":
-                self.queue = [released]
+                self.queue.append(released)
             else:
-                self.queue = [pressed, released]
-            self.ctx.schedule_oneshot(KEYPRESS_DELAY_US)
+                self.queue.extend((pressed, released))
+            if len(self.queue) == 1:
+                self.ctx.schedule_oneshot(KEYPRESS_DELAY_US)
             return
         if name == "autoclick":
             # "autoclick=0" stops the repeat; anything else re-arms it.
@@ -217,6 +221,12 @@ class Peer:
         if not self.queue:
             return
         report = self.queue.pop(0)
+        if not self.subscribed:
+            # No subscriber: there is nothing to notify. Saying "sending" here
+            # would put reports in the log that never reached the air, which is
+            # exactly how a dead link reads as a working one.
+            self.ctx.info("dropping HID report %s (not subscribed)" % report.hex())
+            return
         self.ctx.info("sending HID bitmap report %s" % report.hex())
         self.ctx.notify(H_REPORT_VALUE, report)
         if self.queue:
