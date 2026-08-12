@@ -2079,6 +2079,28 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 }
 
+bool EpubReaderActivity::bleConnectingTitleTakesOver() const {
+  // Nothing to report when BT is off, already linked, or the stack isn't even up
+  // (the lifecycle stops it outside a reader and under heap pressure — that is "off",
+  // not "connecting", and claiming otherwise misreads as a stuck connection).
+  if (!SETTINGS.bluetoothEnabled || !BleHid.isRunning() || BleHid.isConnected()) {
+    bleConnectingSince = 0;
+    return false;
+  }
+  // With no bond there is no remote to connect to: the host is idle, not connecting.
+  if (BleHid.pairedCount() == 0) {
+    bleConnectingSince = 0;
+    return false;
+  }
+  const unsigned long now = millis();
+  if (bleConnectingSince == 0) bleConnectingSince = now;
+  // A bonded remote that has gone to sleep stops advertising until the user presses a
+  // button on it, so the attempt can stay outstanding forever. Give the title back
+  // rather than holding it hostage; the watcher in loop() restores the placeholder if
+  // the link state flips again.
+  return now - bleConnectingSince < BLE_CONNECTING_TITLE_MS;
+}
+
 void EpubReaderActivity::renderStatusBar() const {
   // Calculate progress in book. Use the estimated total while a giant spine is still building so
   // "page X of Y" and the progress bar don't read off the small build watermark.
@@ -2115,7 +2137,7 @@ void EpubReaderActivity::renderStatusBar() const {
     title = epub->getTitle();
   }
 
-  if (SETTINGS.bluetoothEnabled && !BleHid.isConnected()) {
+  if (bleConnectingTitleTakesOver()) {
     // Take over the title slot entirely while connecting; the watcher in
     // loop() redraws the bar on the connect/disconnect flip, restoring the
     // chapter/book title.
