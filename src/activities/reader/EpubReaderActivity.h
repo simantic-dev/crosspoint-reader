@@ -60,6 +60,17 @@ class EpubReaderActivity final : public Activity {
   // to the chapter/book title the moment the connection completes (and
   // returns on disconnect) instead of waiting for the next page turn.
   bool statusBarBleConnected = false;
+  // When the current "BT Connecting..." status-bar takeover started. The placeholder
+  // is only honest for as long as a connection attempt is plausibly in flight; past
+  // that the book title comes back. 0 = not currently claiming the title.
+  mutable unsigned long bleConnectingSince = 0;
+  // How long the status bar may show "BT Connecting...". A remote that has gone to
+  // sleep stops advertising and will not come back until the user presses a button on
+  // it, so an unbounded placeholder costs the user their book title indefinitely for a
+  // connection that is not actually in progress.
+  static constexpr unsigned long BLE_CONNECTING_TITLE_MS = 20000;
+  // True while the status bar should show "BT Connecting..." instead of the title.
+  bool bleConnectingTitleTakesOver() const;
   // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
   // (scan mode draws nothing) and load its missing glyphs from SD during idle,
   // so the next turn's in-render prewarm is a cache hit instead of ~100 ms of

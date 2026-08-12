@@ -138,6 +138,40 @@ bool MappedInputManager::bleEdge(const bool* arr, const Button button) const {
 }
 
 namespace {
+// Out-of-the-box bindings for keys whose meaning is unambiguous. Without these a
+// remote that has never been through Settings -> Bluetooth -> Map Remote Buttons is
+// inert: pollBle() decodes its key correctly, finds no entry in an empty bleKeyMap,
+// and drops it, so the device looks broken rather than unconfigured. Consulted ONLY
+// for a key that has no explicit binding, so anything the user maps still wins.
+// Deliberately limited to the standard navigation keys; vendor and consumer-page
+// codes carry no portable meaning and stay capture-and-assign.
+struct DefaultBinding {
+  freeink::SpecialKey key;
+  MappedInputManager::Button button;
+};
+constexpr DefaultBinding kDefaultBindings[] = {
+    {freeink::SpecialKey::Right, MappedInputManager::Button::PageForward},
+    {freeink::SpecialKey::PageDown, MappedInputManager::Button::PageForward},
+    {freeink::SpecialKey::Left, MappedInputManager::Button::PageBack},
+    {freeink::SpecialKey::PageUp, MappedInputManager::Button::PageBack},
+    {freeink::SpecialKey::Up, MappedInputManager::Button::Up},
+    {freeink::SpecialKey::Down, MappedInputManager::Button::Down},
+    {freeink::SpecialKey::Enter, MappedInputManager::Button::Confirm},
+    {freeink::SpecialKey::Escape, MappedInputManager::Button::Back},
+};
+
+// Resolve a decoded identity against the defaults. kind 1 is a raw HID usage or a
+// vendor code with no portable meaning, so only kind 0 (SpecialKey) is considered.
+bool defaultBindingFor(const uint8_t kind, const uint8_t value, uint8_t& button) {
+  if (kind != 0) return false;
+  for (const auto& d : kDefaultBindings) {
+    if (static_cast<uint8_t>(d.key) != value) continue;
+    button = static_cast<uint8_t>(d.button);
+    return true;
+  }
+  return false;
+}
+
 constexpr float LEFT_EDGE_BACK_GESTURE_FRAC_X = 0.25f;
 constexpr float BOTTOM_EDGE_BACK_GESTURE_FRAC_Y = 0.14f;
 constexpr float TOP_EDGE_MENU_GESTURE_FRAC_Y = 0.14f;
@@ -385,20 +419,30 @@ void MappedInputManager::pollBle() {
     if (!bleinput::encodeKey(ev, kind, value)) continue;
 
     if (bleCaptureMode) {
-      bleCapturedKind = kind;
-      bleCapturedValue = value;
-      bleHasCaptured = true;
+      // Keep the FIRST unconsumed key, not the last. Overwriting meant that when a
+      // remote emitted two reports in one frame (a press plus the host's synthetic
+      // repeat, or a composite device notifying on two characteristics) the key the
+      // user actually pressed was replaced by whatever followed it.
+      if (!bleHasCaptured) {
+        bleCapturedKind = kind;
+        bleCapturedValue = value;
+        bleHasCaptured = true;
+      }
       continue;
     }
 
-    // Resolve the key identity against the persisted mapping table.
+    // Resolve the key identity against the persisted mapping table, falling back to
+    // the standard-navigation defaults when the user has not bound this key.
+    uint8_t button = 0xFF;
     for (const auto& e : SETTINGS.bleKeyMap) {
       if (e.button == 0xFF || e.keyKind != kind || e.keyValue != value) continue;
-      if (e.button < kButtonCount) {
-        blePressEdge[e.button] = true;
-        bleActivityThisFrame = true;
-      }
+      button = e.button;
       break;
+    }
+    if (button == 0xFF && !defaultBindingFor(kind, value, button)) continue;
+    if (button < kButtonCount) {
+      blePressEdge[button] = true;
+      bleActivityThisFrame = true;
     }
   }
 }

@@ -30,11 +30,12 @@ void BleButtonMapActivity::onEnter() {
   step = Step::WaitForKey;
   capturedKind = 0xFF;
   functionIndex = 0;
-  // Start every mapping session from a clean slate: the user re-maps each remote
-  // button once, so a button can't be left bound to a stale action and there's no
-  // separate "clear mappings" step to remember.
-  std::fill(std::begin(SETTINGS.bleKeyMap), std::end(SETTINGS.bleKeyMap), CrossPointSettings::BleKeyMapEntry{});
-  SETTINGS.saveToFile();
+  // Existing bindings are kept. Wiping the table here destroyed every mapping the
+  // moment the user opened this screen — including when they opened it only to read
+  // the list this activity renders, which was therefore always empty. Nothing needs
+  // the wipe: assignCapturedKey() already drops any other key bound to the action it
+  // is assigning, and re-capturing a key reuses that key's existing slot, so neither
+  // a stale action nor a duplicate binding can survive a re-map.
   mappedInput.setBleCaptureMode(true);
   requestUpdate();
 }
@@ -98,6 +99,17 @@ void BleButtonMapActivity::loop() {
   }
 
   // Step::SelectFunction — pick a logical function for the captured key.
+  // Drop anything the remote sends while the user is choosing. pollBle() keeps
+  // latching in capture mode, and the host emits synthetic auto-repeats for a held
+  // key, so without this the repeat that arrived during selection was still sitting
+  // in the buffer when we returned to WaitForKey and was consumed as the *next*
+  // button the user "pressed".
+  {
+    uint8_t staleKind = 0xFF;
+    uint8_t staleValue = 0;
+    mappedInput.takeCapturedBleKey(staleKind, staleValue);
+  }
+
   buttonNavigator.onNext([this] {
     functionIndex = ButtonNavigator::nextIndex(functionIndex, kFunctionCount);
     requestUpdate();

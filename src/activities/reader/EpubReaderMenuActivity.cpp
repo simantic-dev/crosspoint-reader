@@ -222,7 +222,10 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
           return pageTurnLabels[selectedPageTurnOption];
         } else if (value == MenuAction::TOGGLE_BLUETOOTH) {
           if (SETTINGS.bluetoothEnabled) {
-            if (!BleHid.isRunning()) return tr(STR_CONNECTING);
+            // Stack down: the lifecycle stopped it (non-reader activity, WiFi, or the
+            // heap gate). That is paused, not connecting — reporting "connecting" for
+            // a host that is not even running reads as a connection stuck forever.
+            if (!BleHid.isRunning()) return tr(STR_STATE_PAUSED);
             return BleHid.isConnected() ? tr(STR_STATE_ON) : tr(STR_CONNECTING);
           }
           return tr(STR_STATE_OFF);

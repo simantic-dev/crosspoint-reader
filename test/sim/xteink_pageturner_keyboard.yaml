@@ -1,0 +1,21 @@
+# CrossPoint on a simulated Xteink X4 (ESP32-C3) paired with a firmware-less BLE
+# HID page-turner using the keyboard report encoding. See ble_hid_peer_bitmap.py for
+# why the two encodings take different routes through the host's report ingest.
+#
+# The firmware is the shipping image, unmodified: the scenario drives it through
+# its own UI with button presses exactly as a person would -- reader menu,
+# Settings, Controls, Bluetooth, Scan, select -- and everything past that point
+# is real BLE between two models.
+#
+# The payload is a build artifact that does not live in this repo; the tests skip
+# when it is absent rather than failing, so a bare checkout still runs green.
+# Peer script for this scenario: ble_hid_peer.py
+machines:
+  xteink:
+    repl: board-featbt-hidpeer.replx
+    elf: ../payloads/crosspoint-featbt-latest-sim.elf
+    controlMap: "back=saradc@0;confirm=saradc@1;left=saradc@2;right=saradc@3;up=saradc@4;down=saradc@5;power=gpio@3:low"
+media:
+  - type: ble
+    connect: [xteink.radio, xteink.blepeer]
+timeout: 240
