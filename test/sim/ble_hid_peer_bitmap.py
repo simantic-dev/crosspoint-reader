@@ -170,6 +170,9 @@ class Peer:
         self.ctx = ctx
         self.subscribed = False
         self.queue = []
+        # Auto-repeat the click, as a hand would. Turn off with `Command = autoclick=0`
+        # to drive every press explicitly from a test instead.
+        self.repeat = True
 
     def on_connect(self):
         self.subscribed = False
@@ -183,6 +186,33 @@ class Peer:
         self.queue = []
         self.ctx.info(f"disconnected (reason 0x{reason:02x})")
 
+    def on_command(self, name, value):
+        """Runtime control surface, driven by writes to the peer's Command
+        property (`peer.Command = "click=6"` from pytest or the monitor).
+
+        What a command means lives here rather than in the simulator, so this
+        peer is a page-turner because its script says so -- a different script
+        makes the same peripheral a different BLE slave.
+        """
+        if name in ("click", "press", "release"):
+            button = int(value) if value else PRESS_BUTTON
+            pressed = DEVICE.report([(PAGE_BUTTON, button)])
+            released = DEVICE.report(RELEASE)
+            if name == "press":
+                self.queue = [pressed]
+            elif name == "release":
+                self.queue = [released]
+            else:
+                self.queue = [pressed, released]
+            self.ctx.schedule_oneshot(KEYPRESS_DELAY_US)
+            return
+        if name == "autoclick":
+            # "autoclick=0" stops the repeat; anything else re-arms it.
+            self.repeat = value not in ("0", "off", "false")
+            return
+        raise ValueError(
+            "unknown command %r; known: click, press, release, autoclick" % name)
+
     def on_timer(self):
         if not self.queue:
             return
@@ -191,7 +221,7 @@ class Peer:
         self.ctx.notify(H_REPORT_VALUE, report)
         if self.queue:
             self.ctx.schedule_oneshot(KEYPRESS_DELAY_US)
-        elif self.subscribed:
+        elif self.subscribed and self.repeat:
             self.queue = list(CLICK_TOP)
             self.ctx.schedule_oneshot(REPEAT_PERIOD_US)
 
