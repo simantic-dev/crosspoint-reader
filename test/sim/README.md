@@ -27,13 +27,30 @@ through `BleKeyboardHost::onReportIngest` and only the first was ever exercised:
 - **keyboard** — an 8-byte boot-protocol report carrying a HID usage. Takes the
   standard keyboard slot path and surfaces as a `SpecialKey`, so the default
   bindings apply and the key works with no mapping.
-- **bitmap** — the encoding a Hanlinyue **Free 2** actually emits, reverse
-  engineered by a tester on #2418: 3-byte reports, top button `20 00 00`, bottom
-  `04 00 00`, explicit release `00 00 00`. These are *not* keyboard usages and
-  *not* consumer usage IDs. They fall through to the generic fallback, where the
-  identity is the first non-zero byte. Because such vendor codes carry no
-  portable meaning, they stay capture-and-assign — the bitmap test pins the
-  decode, not a default binding.
+- **bitmap** — a button bitmap, the shape a Hanlinyue **Free 2** presents. These
+  are *not* keyboard usages and *not* consumer usage IDs; they fall through to the
+  generic fallback, where the identity is the first non-zero byte. Because such
+  vendor codes carry no portable meaning, they stay capture-and-assign — the
+  bitmap test pins the decode, not a default binding.
+
+### Devices are declared, not copied
+
+`hid_descriptor.py` builds a Report Map and the reports that conform to it from one
+declaration, because that is how a host reads a device: Report Size and Report Count
+give the bit geometry, and the Input item's Variable-vs-Array flag decides whether a
+control is one bit of a bitfield or a usage code in an array slot
+([kernel.org](https://docs.kernel.org/hid/hidintro.html)).
+
+Writing it the other way round — copying the bytes one remote happens to emit —
+fits the bench to that remote and says nothing about the next one. The Free 2's
+`20 00 00` is not a magic number under this construction: it is bit 5 of a variable
+input, i.e. **button 6** of a 24-bit button bitmap, and `04 00 00` is button 3.
+Changing `PRESS_BUTTON` in the peer makes it a different remote without editing a
+single report byte, and `button_bitfield`, `boot_keyboard` and `consumer_array`
+cover the three encodings a page-turner can plausibly use.
+
+`test_hid_descriptor.py` pins all of this and needs **no simulator, payload or
+hardware** — it runs in a bare checkout.
 
 The same remote emits different encodings in its other power-button-cycled modes,
 which is exactly why the capture-then-assign design is right and why hardcoded

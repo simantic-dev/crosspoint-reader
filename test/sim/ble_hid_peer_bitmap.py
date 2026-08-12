@@ -72,51 +72,38 @@ H_CTRLPOINT_DECL = 0x001B
 H_CTRLPOINT_VALUE = 0x001C
 H_HID_LAST = H_CTRLPOINT_VALUE
 
-# Minimal keyboard report map: 8-byte boot-style input report (modifiers,
-# reserved, 6 keycodes), report ID 1.
-REPORT_MAP = bytes([
-    0x05, 0x01,        # Usage Page (Generic Desktop)
-    0x09, 0x06,        # Usage (Keyboard)
-    0xA1, 0x01,        # Collection (Application)
-    0x85, 0x01,        #   Report ID (1)
-    0x05, 0x07,        #   Usage Page (Key Codes)
-    0x19, 0xE0, 0x29, 0xE7,  # Usage Min/Max (modifiers)
-    0x15, 0x00, 0x25, 0x01,  # Logical 0..1
-    0x75, 0x01, 0x95, 0x08,  # 1 bit x 8
-    0x81, 0x02,        #   Input (Data, Var, Abs) - modifier byte
-    0x75, 0x08, 0x95, 0x01,  # 8 bits x 1
-    0x81, 0x01,        #   Input (Const) - reserved
-    0x75, 0x08, 0x95, 0x06,  # 8 bits x 6
-    0x15, 0x00, 0x25, 0x65,  # Logical 0..0x65
-    0x19, 0x00, 0x29, 0x65,  # Usage 0..0x65
-    0x81, 0x00,        #   Input (Data, Array) - keys
-    0xC0,              # End Collection
-    # Second collection: Consumer Control. Its presence is what makes the host's
-    # report-map hint parser report consumer=1 alongside kbd=1, which is the
-    # combination a real Free 2 presents (kbd=1 consumer=1 preferredByte=2).
-    0x05, 0x0C,        # Usage Page (Consumer)
-    0x09, 0x01,        # Usage (Consumer Control)
-    0xA1, 0x01,        # Collection (Application)
-    0x85, 0x02,        #   Report ID (2)
-    0x15, 0x00, 0x26, 0xFF, 0x00,  # Logical 0..255
-    0x19, 0x00, 0x2A, 0xFF, 0x00,  # Usage 0..255
-    0x75, 0x08, 0x95, 0x03,        # 8 bits x 3 -- the 3-byte button bitmap
-    0x81, 0x00,        #   Input (Data, Array)
-    0xC0,              # End Collection
-])
+# The device this peer presents is DECLARED, not copied. hid_descriptor builds both
+# the Report Map and the conforming report bytes from the same declaration, so the
+# bytes on the wire follow from Report Size / Report Count / the Input item's
+# Variable flag rather than from a teardown of one remote.
+#
+# A Hanlinyue "Free 2" page-turner emits 20 00 00 for its top button and 04 00 00 for
+# its bottom (teardown on crosspoint-reader#2418). Those are not magic numbers: they
+# are buttons 6 and 3 of a 24-bit button bitmap. Change PRESS_BUTTON below and the
+# peer becomes a different remote, without editing a single report byte.
+# The simulator's embedded Python host does not define __file__ for a peripheral
+# script, so the module directory is located via the working directory instead.
+import os
+import sys
+
+try:
+    from hid_descriptor import PAGE_BUTTON, button_bitfield
+except ImportError:
+    sys.path.insert(0, os.getcwd())
+    from hid_descriptor import PAGE_BUTTON, button_bitfield
+
+DEVICE = button_bitfield(buttons=24)
+REPORT_MAP = DEVICE.report_map()
+
+PRESS_BUTTON = 6      # Free 2 top button
+RELEASE = ()
 
 # HID Information: bcdHID 1.11, country 0, flags RemoteWake|NormallyConnectable
 HID_INFO = bytes([0x11, 0x01, 0x00, 0x03])
 
 KEY_RIGHT_ARROW = 0x4F
 
-# Button bitmap codes, taken from a teardown of a Hanlinyue "Free 2" page-turner
-# posted on crosspoint-reader#2418: the remote emits 3-byte bitmap reports rather
-# than keyboard usages or consumer usage IDs, one clean press/release pair per
-# physical press. Each button raises its own bit in byte 0.
-BITMAP_TOP = bytes([0x20, 0x00, 0x00])
-BITMAP_BOTTOM = bytes([0x04, 0x00, 0x00])
-BITMAP_RELEASE = bytes([0x00, 0x00, 0x00])
+
 
 SERVICES = [
     # (service handle, last handle, 16-bit uuid)
@@ -146,7 +133,7 @@ READ_VALUES = {
     H_HIDINFO_VALUE: HID_INFO,
     H_REPORTMAP_VALUE: REPORT_MAP,
     H_PROTOMODE_VALUE: bytes([0x01]),          # report protocol
-    H_REPORT_VALUE: bytes(3),
+    H_REPORT_VALUE: bytes(DEVICE.report_len),
     H_REPORT_REF: bytes([0x01, 0x01]),         # report ID 1, input report
 }
 
@@ -157,8 +144,9 @@ READ_VALUES = {
 KEYPRESS_DELAY_US = 100_000
 REPEAT_PERIOD_US = 15_000_000
 
-CLICK_TOP = (BITMAP_TOP, BITMAP_RELEASE)
-CLICK_BOTTOM = (BITMAP_BOTTOM, BITMAP_RELEASE)
+CLICK_TOP = (DEVICE.report([(PAGE_BUTTON, PRESS_BUTTON)]),
+             DEVICE.report(RELEASE))
+
 
 
 def u16(value):
