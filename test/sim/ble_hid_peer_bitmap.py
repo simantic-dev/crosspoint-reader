@@ -46,6 +46,13 @@ UUID_REPORT = 0x2A4D
 UUID_PROTOCOL_MODE = 0x2A4E
 UUID_BATTERY_SERVICE = 0x180F
 UUID_BATTERY_LEVEL = 0x2A19
+# HOGP requires the HID Device to expose a single Device Information Service
+# instance, and requires that instance to include the PnP ID characteristic. It is
+# how a host identifies the device's vendor/product before it has read a single
+# report, so a peer without it is not a conformant HID device even though a
+# permissive host will still talk to it.
+UUID_DEVICE_INFO_SERVICE = 0x180A
+UUID_PNP_ID = 0x2A50
 
 CHAR_PROP_READ = 0x02
 CHAR_PROP_WRITE_NR = 0x04
@@ -71,6 +78,9 @@ H_REPORT_REF = 0x001A         # Report Reference: report ID 1, input
 H_CTRLPOINT_DECL = 0x001B
 H_CTRLPOINT_VALUE = 0x001C
 H_HID_LAST = H_CTRLPOINT_VALUE
+H_DIS_SERVICE = 0x0020        # group 0x0020..0x0022
+H_PNP_DECL = 0x0021
+H_PNP_VALUE = 0x0022
 
 # The device this peer presents is DECLARED, not copied. hid_descriptor builds both
 # the Report Map and the conforming report bytes from the same declaration, so the
@@ -81,16 +91,11 @@ H_HID_LAST = H_CTRLPOINT_VALUE
 # its bottom (teardown on crosspoint-reader#2418). Those are not magic numbers: they
 # are buttons 6 and 3 of a 24-bit button bitmap. Change PRESS_BUTTON below and the
 # peer becomes a different remote, without editing a single report byte.
-# The simulator's embedded Python host does not define __file__ for a peripheral
-# script, so the module directory is located via the working directory instead.
 import os
 import sys
 
-try:
-    from hid_descriptor import PAGE_BUTTON, button_bitfield
-except ImportError:
-    sys.path.insert(0, os.getcwd())
-    from hid_descriptor import PAGE_BUTTON, button_bitfield
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hid_descriptor import PAGE_BUTTON, button_bitfield  # noqa: E402
 
 DEVICE = button_bitfield(buttons=24)
 REPORT_MAP = DEVICE.report_map()
@@ -109,6 +114,7 @@ SERVICES = [
     # (service handle, last handle, 16-bit uuid)
     (H_BAT_SERVICE, H_BAT_VALUE, UUID_BATTERY_SERVICE),
     (H_HID_SERVICE, H_HID_LAST, UUID_HID_SERVICE),
+    (H_DIS_SERVICE, H_PNP_VALUE, UUID_DEVICE_INFO_SERVICE),
 ]
 
 CHARACTERISTICS = [
@@ -121,6 +127,7 @@ CHARACTERISTICS = [
     (H_REPORT_DECL, H_REPORT_VALUE,
      CHAR_PROP_READ | CHAR_PROP_NOTIFY, UUID_REPORT),
     (H_CTRLPOINT_DECL, H_CTRLPOINT_VALUE, CHAR_PROP_WRITE_NR, UUID_HID_CONTROL_POINT),
+    (H_PNP_DECL, H_PNP_VALUE, CHAR_PROP_READ, UUID_PNP_ID),
 ]
 
 DESCRIPTORS = {
@@ -135,6 +142,11 @@ READ_VALUES = {
     H_PROTOMODE_VALUE: bytes([0x01]),          # report protocol
     H_REPORT_VALUE: bytes(DEVICE.report_len),
     H_REPORT_REF: bytes([0x01, 0x01]),         # report ID 1, input report
+    # PnP ID: vendor ID source, vendor ID, product ID, product version (LE).
+    # Source 0x02 = USB Implementer's Forum; 0x1209 is pid.codes, the VID handed
+    # out for open-source hardware, so this identifies as a test device rather
+    # than impersonating a real vendor.
+    H_PNP_VALUE: bytes([0x02, 0x09, 0x12, 0x01, 0x00, 0x00, 0x01]),
 }
 
 # Once subscribed, click the top button -- press then explicit release, the pair a
