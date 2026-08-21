@@ -1,9 +1,28 @@
 name: CI (build)
 
+# DOCS ARE INERT. A prose-only commit builds nothing here. Safe only while the
+# default branch carries no required status checks — GitHub leaves a
+# path-filtered-away required check `Pending` forever, blocking the merge.
+# (Actions does not support YAML anchors, hence the duplication.)
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
+      - 'LICENSE'
+
+# Cancel superseded runs on non-default refs; the default branch is left alone.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 permissions:
   contents: read
@@ -11,6 +30,7 @@ permissions:
 jobs:
   clang-format:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -35,6 +55,7 @@ jobs:
 
   cppcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -66,6 +87,7 @@ jobs:
   build-default:
     name: Build default
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -120,6 +142,7 @@ jobs:
   build-sticky:
     name: Build sticky
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -165,6 +188,7 @@ jobs:
 
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -202,6 +226,7 @@ jobs:
       - unit-tests
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Fail because needed jobs failed
         # Fail if any job failed or was cancelled (skipped jobs are ok)
