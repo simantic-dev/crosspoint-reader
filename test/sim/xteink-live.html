@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossPoint on Simantic — live</title>
+<style>
+  :root {
+    --paper: #f7f6f1; --ink: #191916; --graphite: #6d6d66;
+    --line: #d9d8cf; --accent: #2f6f6a; --card: #ffffff; --bezel: #26261f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #16161a; --ink: #e8e7e0; --graphite: #97968e; --line: #33333a; --accent: #6fb5af; --card: #1e1e24; --bezel: #0c0c0f; }
+  }
+  body { background: var(--paper); color: var(--ink); margin: 0;
+    font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: 2.5rem 1.25rem 4rem; }
+  main { max-width: 940px; margin: 0 auto; }
+  .eyebrow { font: 600 0.72rem/1 ui-monospace, Menlo, monospace; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 0.8rem; }
+  h1 { font-family: Charter, Georgia, serif; font-size: clamp(1.5rem, 3.5vw, 2rem);
+    margin: 0 0 0.6rem; }
+  .lede { color: var(--graphite); max-width: 58ch; margin: 0 0 1.6rem; }
+  #status { font: 600 0.75rem/1 ui-monospace, Menlo, monospace; letter-spacing: 0.06em; }
+  #status.ok { color: var(--accent); }
+  #status.bad { color: #b3452f; }
+
+  .stage { display: flex; flex-wrap: wrap; gap: 2.5rem; align-items: flex-start; margin-top: 1.4rem; }
+  .device { background: var(--bezel); border-radius: 26px; padding: 22px 46px 26px 22px;
+    position: relative; flex: none; box-shadow: 0 8px 30px rgb(0 0 0 / 0.25); }
+  canvas { display: block; width: min(340px, 72vw); height: auto; background: #fff; border-radius: 3px; }
+  .sidebtns { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px; }
+  .frontbtns { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+  button { font: 600 0.72rem/1 ui-monospace, Menlo, monospace; letter-spacing: 0.05em;
+    color: #ddd; background: #3a3a31; border: 1px solid #55554a; border-radius: 8px;
+    padding: 0.6rem 0.8rem; cursor: pointer; touch-action: none; }
+  .sidebtns button { writing-mode: vertical-rl; padding: 0.8rem 0.5rem; }
+  button:hover { background: #4a4a3f; }
+  button.held, button:active { transform: translateY(1px); background: #2f6f6a; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .note { font-size: 0.85rem; color: var(--graphite); max-width: 40ch; }
+  .note code { font: 0.78rem ui-monospace, Menlo, monospace; background: var(--card);
+    border: 1px solid var(--line); border-radius: 4px; padding: 0.1rem 0.35rem; }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Simantic · live control</p>
+  <h1>CrossPoint, live</h1>
+  <p class="lede">This page drives a <strong>running</strong> simulation: presses go over a local
+  WebSocket into the ADC-ladder model, and every e-ink refresh streams back as the firmware paints it.
+  <span id="status">connecting…</span></p>
+
+  <div class="stage">
+    <div class="device">
+      <canvas id="screen" width="480" height="800"></canvas>
+      <div class="sidebtns">
+        <button data-btn="up">UP</button>
+        <button data-btn="down">DOWN</button>
+      </div>
+      <div class="frontbtns">
+        <button data-btn="back">BACK</button>
+        <button data-btn="confirm">CONFIRM</button>
+        <button data-btn="left">LEFT</button>
+        <button data-btn="right">RIGHT</button>
+      </div>
+    </div>
+    <div class="note">
+      <p>Start the sim with:</p>
+      <p><code>cd test/sim &amp;&amp; sim --scenario xteink-live.yaml --timeout 3600 --real-time</code></p>
+      <p>then open this file. Buttons hold while pressed — long-press works. Keyboard:
+      arrows, Enter, Esc.</p>
+    </div>
+  </div>
+</main>
+<script>
+const port = new URLSearchParams(location.search).get("port") || "21234";
+const machine = new URLSearchParams(location.search).get("machine") || "";
+const statusEl = document.getElementById("status");
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+let ws;
+
+function drawFrame(msg) {
+  const bytes = Uint8Array.from(atob(msg.bits), c => c.charCodeAt(0));
+  const w = msg.width, h = msg.height;           // panel: 800x480
+  const depth = msg.depth || 1;                  // 2bpp (4-level) or legacy 1bpp
+  const perByte = 8 / depth;
+  const rowBytes = Math.ceil(w / perByte);
+  const maxLevel = (1 << depth) - 1;
+  canvas.width = h; canvas.height = w;           // device: 480x800 (transpose)
+  const img = ctx.createImageData(h, w);
+  for (let Y = 0; Y < w; Y++) {                  // device row = panel column
+    for (let X = 0; X < h; X++) {                // device col = panel row
+      const byte = bytes[X * rowBytes + Math.floor(Y / perByte)];
+      const shift = 8 - depth - depth * (Y % perByte);
+      const level = (byte >> shift) & maxLevel;
+      const v = Math.round(level * 255 / maxLevel);  // 0 = black .. max = white
+      const o = (Y * h + X) * 4;
+      img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function connect() {
+  ws = new WebSocket(`ws://localhost:${port}/control` + (machine ? `/${machine}` : ""));
+  ws.onopen = () => { statusEl.textContent = "connected"; statusEl.className = "ok"; };
+  ws.onclose = () => {
+    statusEl.textContent = "disconnected — retrying…"; statusEl.className = "bad";
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "frame") drawFrame(msg);
+  };
+}
+connect();
+
+function send(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+document.querySelectorAll("button[data-btn]").forEach(b => {
+  const name = b.dataset.btn;
+  const down = e => { e.preventDefault(); b.classList.add("held"); send({ press: name }); };
+  const up = () => { b.classList.remove("held"); send({ release: name }); };
+  b.addEventListener("pointerdown", down);
+  b.addEventListener("pointerup", up);
+  b.addEventListener("pointerleave", up);
+});
+
+const keys = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+               Enter: "confirm", Escape: "back" };
+const heldKeys = new Set();
+document.addEventListener("keydown", e => {
+  const name = keys[e.key];
+  if (!name || heldKeys.has(e.key)) return;
+  heldKeys.add(e.key); e.preventDefault(); send({ press: name });
+});
+document.addEventListener("keyup", e => {
+  const name = keys[e.key];
+  if (!name) return;
+  heldKeys.delete(e.key); send({ release: name });
+});
+</script>
+</body>
+</html>

@@ -31,3 +31,6 @@ lib/EpdFont/scripts/output/
 /sdkconfig.*
 sdkconfig.sticky
 flake.*
+
+# Simulator payloads embed the proprietary ESP32-C3 mask ROM (not redistributable).
+test/payloads/

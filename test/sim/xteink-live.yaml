@@ -1,0 +1,12 @@
+# Live-drive the CrossPoint feat-ble build with the browser client.
+#   sim --scenario test/sim/xteink-live.yaml --timeout 3600 --real-time
+#   then open xteink-live.html
+machines:
+  xteink:
+    repl: board-featbt-scripted.replx
+    elf: ../payloads/crosspoint-featble-sim.elf
+    controlMap: "back=saradc@0;confirm=saradc@1;left=saradc@2;right=saradc@3;up=saradc@4;down=saradc@5;power=gpio@3:low"
+media:
+  - type: ble
+    connect: [xteink.radio, xteink.blepeer]
+controlPort: 21234
