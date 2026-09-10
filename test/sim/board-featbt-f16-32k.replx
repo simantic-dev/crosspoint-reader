@@ -78,7 +78,12 @@ xip: Memory.MappedMemory @ {
     }
     size: 0x800000      // 8 MB (ESP32C3 EXTMEM region)
 
-rtc_fast: Memory.MappedMemory @ sysbus 0x50000000
+// ArrayMemory, not MappedMemory: every access crosses the bus, so
+// `--trace-memory logHead --trace-memory logMessages:4096` sees the firmware's
+// RTC log ring being written (watchpoints on MappedMemory pages never fire,
+// simantic task #24). 8 KB that is only touched by logging; no timing cost
+// worth measuring.
+rtc_fast: Memory.ArrayMemory @ sysbus 0x50000000
     size: 0x2000
 
 // --- SPI0/SPIMEM0: cache-coupled XIP flash config controller. Bootloader/app

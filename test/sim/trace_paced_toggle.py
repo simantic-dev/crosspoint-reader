@@ -35,8 +35,10 @@ SYMS = ["app_main", "ReaderActivity::onEnter", "EpubReaderActivity::loadBook", "
         "EpubReaderMenuActivity::render", "EpubReaderMenuActivity::activateIndex",
         "silentRestartToReader", "esp_restart",
         "bleinput::ensureStarted", "bleinput::stop", "freeink::BleKeyboardHost::begin", "logPrintf"]
+SYMS += [x for x in os.environ.get("EXTRA_SYMS", "").split(",") if x]
 cmd = [SIM, "--scenario", "trace-toggle.yaml", "--timeout", "900", "--show-renode-logs"]
 for s in SYMS: cmd += ["--trace-symbol", s]
+cmd += [a for a in os.environ.get("EXTRA_ARGS", "--memory-stats 100ms --trace-memory logHead --trace-memory logMessages:4096").split() if a]   # e.g. "--trace-memory logHead --trace-memory logMessages:4096"
 p = subprocess.Popen(cmd, cwd=HERE, env=env, stdout=open(HERE/"trace-toggle.log","w"), stderr=subprocess.STDOUT, start_new_session=True)
 import signal, atexit
 def stop():
@@ -65,6 +67,8 @@ def drain(s):
         while s.recv(1 << 20): pass
     except (socket.timeout, OSError): pass
 TR = re.compile(r"^\[(\d+\.\d+)s\] \(TRACE\) (\S+)(.*)$")
+TS = re.compile(r"^\[(\d+\.\d+)s\]")
+vnow = 0.0                                  # virtual time of the newest line seen
 seen = []            # (vt, symbol, args)
 pos = 0
 def poll():
@@ -73,8 +77,11 @@ def poll():
     if not OUT.exists(): return 0
     with open(OUT, "r", errors="replace") as f:
         f.seek(pos); chunk = f.read(); pos = f.tell()
+    global vnow
     n = 0
     for l in chunk.splitlines():
+        ts = TS.match(l)
+        if ts: vnow = max(vnow, float(ts.group(1)))
         m = TR.match(l)
         if m: seen.append((float(m.group(1)), m.group(2), m.group(3).strip())); n += 1
     return n
@@ -87,18 +94,27 @@ def wait_for(pred, what, limit):
         time.sleep(0.2)
     log("TIMEOUT waiting for", what); return False
 def wait_quiet(sym, quiet, limit):
-    """Wait until `sym` has been hit at least once and then stops arriving for `quiet` wall-seconds."""
-    t0 = time.time(); poll(); n = count(sym); last = time.time() if n else None
+    """Wait until `sym` has been hit at least once and then stops arriving for `quiet` VIRTUAL seconds."""
+    t0 = time.time(); poll(); n = count(sym); last = vnow if n else None
     while time.time() - t0 < limit:
         poll(); drain(s)
-        if count(sym) != n: n = count(sym); last = time.time()
-        if last and time.time() - last > quiet: return True
+        if count(sym) != n: n = count(sym); last = vnow
+        if last is not None and vnow - last > quiet: return True
         time.sleep(0.2)
     return False
 pid = 0
-def press(s, name, hold=0.3):
+HOLD_V = float(os.environ.get("HOLD_V", "0.35"))   # virtual seconds a button stays down
+def press(s, name, hold=None):
+    """Press, hold until the sim's own clock has advanced HOLD_V, release.
+    The clock is the newest timestamp in output.txt; --memory-stats gives a
+    line every 0.1 s virtual so the hold never depends on host speed."""
     global pid
-    pid += 1; send(s, {"press": name, "id": pid}); time.sleep(hold); send(s, {"release": name})
+    pid += 1; poll(); t0 = vnow
+    send(s, {"press": name, "id": pid})
+    w0 = time.time()
+    while vnow - t0 < HOLD_V and time.time() - w0 < 60:
+        time.sleep(0.05); poll(); drain(s)
+    send(s, {"release": name})
 s = ws(); log("connected")
 ok = wait_for(lambda: count("ReaderActivity::onEnter") >= 1, "ReaderActivity::onEnter (reader opened)", 600)
 if not ok: log("no trace lines at all? lines seen:", len(seen)); 
@@ -145,6 +161,11 @@ print("app_main hits:", count("app_main"), "| restart requests:", count("silentR
       "| reader opens:", count("ReaderActivity::onEnter"), "| repaints:", count("GfxRenderer::displayBuffer"))
 raw = OUT.read_text(errors="replace")
 print("ROM banners on UART0:", raw.count("(UART0) 45 53 50 2D 52 4F 4D 3A"))
+print("firmware log (RTC ring via --trace-memory; needs rtc_fast as ArrayMemory):")
+import subprocess
+ring = subprocess.run([sys.executable, str(HERE/"ring_from_memtrace.py"), str(OUT)], capture_output=True, text=True).stdout
+for l in ring.splitlines():
+    if l.strip() and "[SCT]" not in l and "FDC] Failed" not in l: print("  ", l[:150])
 print("trace timeline (first 3 + all non-repaint):")
 shown = 0
 for vt, sym, a in seen:
