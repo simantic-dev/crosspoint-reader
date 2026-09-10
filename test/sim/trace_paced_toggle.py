@@ -142,6 +142,11 @@ act = [a for _, sym, a in seen if sym.startswith("EpubReaderMenuActivity::activa
 log("activateIndex args:", act[-1] if act else None)
 row = int(re.search(r"a1=0x([0-9A-F]+)", act[-1]).group(1), 16) if act else -1
 if row != BT_ROW: sys.exit(f"activated row {row}, wanted {BT_ROW}: a press was dropped or the menu differs; not proceeding blind")
+# The restart call lands ~20 ms of virtual time after activateIndex; give it
+# half a virtual second before concluding the heap was above the floor.
+t_act = vnow
+while vnow - t_act < 0.5 and not (count("silentRestartToReader") + count("esp_restart")):
+    time.sleep(0.1); poll(); drain(s)
 if not (count("silentRestartToReader") + count("esp_restart")):
     # Heap was above the floor: the toggle only flipped the setting. BLE starts from
     # the lifecycle tick once the reader is back in front, so leave the menu.
