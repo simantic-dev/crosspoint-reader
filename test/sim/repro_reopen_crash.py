@@ -23,7 +23,7 @@ OUT = HERE/"output.txt"; OUT.unlink(missing_ok=True)
 (HERE/"trace-reopen.yaml").write_text(f"""machines:
   xteink:
     repl: {REPLX}
-    elf: ../payloads/crosspoint-featble-sim.elf
+    elf: ../payloads/{os.environ.get('PAYLOAD', 'crosspoint-featble-sim.elf')}
     symbolsElfPath: ../../.pio/build/sim/firmware.elf
     controlMap: "back=saradc@0;confirm=saradc@1;left=saradc@2;right=saradc@3;up=saradc@4;down=saradc@5"
 media:
