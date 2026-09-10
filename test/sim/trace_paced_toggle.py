@@ -33,7 +33,7 @@ controlPort: {PORT}
 """)
 SYMS = ["app_main", "ReaderActivity::onEnter", "EpubReaderActivity::loadBook", "GfxRenderer::displayBuffer",
         "EpubReaderMenuActivity::render", "EpubReaderMenuActivity::activateIndex",
-        "silentRestartToReader", "esp_restart",
+        "silentRestartToReader", "esp_restart", "panic_abort", "abort",
         "bleinput::ensureStarted", "bleinput::stop", "freeink::BleKeyboardHost::begin", "logPrintf",
         "SettingsManager::saveToFile"]
 SYMS += [x for x in os.environ.get("EXTRA_SYMS", "").split(",") if x]
@@ -120,8 +120,10 @@ s = ws(); log("connected")
 ok = wait_for(lambda: count("ReaderActivity::onEnter") >= 1, "ReaderActivity::onEnter (reader opened)", 600)
 if not ok: log("no trace lines at all? lines seen:", len(seen)); 
 wait_for(lambda: count("EpubReaderActivity::loadBook") >= 1, "loadBook entry", 120)
-paints0 = count("GfxRenderer::displayBuffer")
-wait_for(lambda: count("GfxRenderer::displayBuffer") > paints0, "first page painted after loadBook", 900)
+t_load = seen[-1][0]
+# the reader's own entry repaint lands a few ms after loadBook; the first page
+# is the first repaint clearly after the load started
+wait_for(lambda: any(sym.startswith("GfxRenderer::displayBuffer") and t > t_load + 1.0 for t, sym, _ in seen), "first page painted after loadBook", 900)
 wait_quiet("GfxRenderer::displayBuffer", quiet=6.0, limit=600)      # background build repaints stopped
 log("reader settled; repaints so far", count("GfxRenderer::displayBuffer"))
 for attempt in range(3):
@@ -208,7 +210,22 @@ if not (count("silentRestartToReader") + count("esp_restart")):
     log("no restart requested: this state does not take the defrag-restart path; stopping early")
     stop(); poll()
 if count("silentRestartToReader") + count("esp_restart"): wait_for(lambda: count("app_main") >= 2, "second app_main (machine rebooted)", 180)
-if count("app_main") >= 2: wait_for(lambda: count("ReaderActivity::onEnter") >= 2, "reader re-opened after reboot", 300)
+if count("app_main") >= 2:
+    wait_for(lambda: count("ReaderActivity::onEnter") >= 2, "reader re-opened after reboot", 300)
+    # The oscillation question: after the defrag reboot BT auto-starts on the way
+    # back into the book while the section rebuilds. Watch WATCH_V virtual seconds
+    # for a BLE start, a second restart request, a third boot, or an abort.
+    WATCH_V = float(os.environ.get("WATCH_V", "150"))
+    t_boot2 = [t for t, sym, _ in seen if sym.startswith("app_main")][1]
+    log("watching", WATCH_V, "virtual s after the reboot")
+    w0 = time.time()
+    while vnow - t_boot2 < WATCH_V and time.time() - w0 < 1500:
+        poll(); drain(s)
+        if count("app_main") >= 3 or count("panic_abort") + count("abort") >= 1: break
+        if count("silentRestartToReader") + count("esp_restart") >= 4: break
+        time.sleep(0.5)
+    log("after reboot: BLE starts", count("bleinput::ensureStarted"), "| host begin", count("freeink::BleKeyboardHost::begin"),
+        "| restart requests", count("silentRestartToReader"), "| boots", count("app_main"), "| abort", count("panic_abort") + count("abort"))
 stop(); poll()
 print("\n=== RESULT ===")
 print("app_main hits:", count("app_main"), "| restart requests:", count("silentRestartToReader"), "+", count("esp_restart"),

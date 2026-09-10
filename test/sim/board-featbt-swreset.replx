@@ -1,0 +1,320 @@
+// Xteink X4 e-reader (ESP32-C3) + BLE radio block set.
+//
+// Base: mcu-lib-xteink/models/ESP32C3/variants/XteinkX4.replx (SSD1677 e-ink on
+// SPI mux, SD card, ADC button ladder, GPIO, scripted board helper) — unmodified
+// below except where noted. Merged in: the BLE-capable blocks from
+// simantic-cli-esp32s3-ble-boot's .m3test/ESP32C3_ble.replx (ESP32C3_Radio +
+// its scripted PHY/MAC register-tracer neighbourhood + the BLE exchange-memory
+// region), assembled for the crosspoint-reader/rundir-featbt validation run.
+//
+// Merge notes (dedupe):
+//   - modem_ce (BLE replx, 0x600CE000) DROPPED: identical address to this
+//     platform's `assist_debug` (ASSIST_DEBUG hw stack-guard); the BLE doc
+//     itself confirms 0x600CE000 is ASSIST_DEBUG, not modem RX state
+//     (infra-crosspoint/docs/esp32c3-ble-m3-continuous-scan.md §2, "red
+//     herring cleared"). One block covers both roles.
+//   - BLE replx's `i2c0: ESP32C3_I2C @ 0x60013000` DROPPED: collides with the
+//     X4 board's scripted `i2c0` (power-button actor) at the same address.
+//     The board's scripted stub stays — it's load-bearing for boot
+//     (verifyPowerButtonWakeup) and this platform has no real I2C devices.
+//   - BLE replx's `spi2: SPI.ESP32C3_GPSPI2 @ 0x60024000 { IRQ -> intmatrix@19 }`
+//     DROPPED: collides with the X4 board's `gpspi2` at the same address
+//     (shared e-ink/SD bus). The IRQ-19 wiring is a BLE-scratch-platform
+//     convenience unrelated to the radio blocks and isn't required by the
+//     radio IRQ wiring below; if GPSPI2 interrupt-mode BLE firmware needs it
+//     later, add `IRQ -> intmatrix@19` onto the existing `gpspi2` line.
+//   - BLE replx's `rf: Scripted.ScriptedPeripheral @ 0x6000E000` (bletrace.py
+//     stub) DROPPED: same address as the X4 board's `regi2c` (I2C_ANA_MST
+//     analog-calibration master; real silicon uses this register file for
+//     RF calibration writes too). The board's plain-storage `regi2c` stays —
+//     load-bearing for the ADC boot path, and behaves equivalently for BLE
+//     PHY calibration writes (reads return prior writes, no hard fault),
+//     just without bletrace.py's access logging.
+//   - flash_data size kept at the X4's 16 MB (W25Q128-class part); the BLE
+//     scratch platform used 2 MB for its own small test firmware only.
+//
+// Radio IRQ wiring (RE'd from libbtdm_app.a + ROM, see the doc above):
+//   RWBLE -> intmatrix@8, RWBT -> intmatrix@7, BT_MAC -> intmatrix@4,
+//   BT_BB -> intmatrix@5.
+//
+// NOTE: no `init:` sections anywhere in this file (product CLI loader drops
+// them silently) — every peripheral is configured with creation-time
+// properties only, matching both source files' existing style.
+
+cpu: CPU.ESP32C3_CPU @ sysbus
+    ResetVector: 0x40000000
+    cpuType: "rv32imc_zicsr_zifencei"
+    privilegedArchitecture: PrivilegedArchitecture.Priv1_11
+    timeProvider: empty
+    // ESP-custom CSRs are registered as stubs in ESP32C3_CPU; relax remaining CSR
+    // validation so any not-yet-registered custom CSR warns instead of trapping.
+    CSRValidation: CSRValidationLevel.None
+
+// --- On-chip SRAM (C3 map) ---
+sram1: Memory.MappedMemory @ {
+        sysbus 0x3FC80000;
+        sysbus 0x40380000  // instruction-bus alias
+    }
+    size: 0x60000       // 384 kB
+
+sram0: Memory.MappedMemory @ sysbus 0x4037C000
+    size: 0x4000        // 16 kB
+
+// --- Mask ROM: code @ 0x40000000, data window @ 0x3ff00000 ---
+rom: Memory.MappedMemory @ sysbus 0x40000000
+    size: 0x60000       // 384 kB (ESP32C3_MEMREGION_IROM)
+
+rom_drom: Memory.MappedMemory @ sysbus 0x3FF00000
+    size: 0x20000
+
+// --- Flash image backing (bootloader + partition + app), loaded at 0x30000000;
+//     the SPI flash device and cache read it by reference. ---
+flash_data: Memory.MappedMemory @ sysbus 0x30000000
+    size: 0x1000000     // 16 MB (Xteink X4: W25Q128-class part)
+
+// --- Cache-managed XIP window (ICACHE 0x42000000, DCACHE 0x3c000000 alias) ---
+xip: Memory.MappedMemory @ {
+        sysbus 0x42000000;
+        sysbus 0x3C000000
+    }
+    size: 0x800000      // 8 MB (ESP32C3 EXTMEM region)
+
+// ArrayMemory, not MappedMemory: every access crosses the bus, so
+// `--trace-memory logHead --trace-memory logMessages:4096` sees the firmware's
+// RTC log ring being written (watchpoints on MappedMemory pages never fire,
+// simantic task #24). 8 KB that is only touched by logging; no timing cost
+// worth measuring.
+rtc_fast: Memory.ArrayMemory @ sysbus 0x50000000
+    size: 0x2000
+
+// --- SPI0/SPIMEM0: cache-coupled XIP flash config controller. Bootloader/app
+//     bytes come via ESP32C3_Cache page-copy, not this block; it just lets the
+//     ROM's SPI0 flash-init complete (CMD self-clears, RD_STATUS reports not-busy). ---
+spimem0: SPI.ESP32C3_SpiMem0 @ sysbus 0x60003000
+
+// --- SPI1 flash controller + attached flash device backed by the image ---
+spi1: SPI.ESP32C3_SPI @ sysbus 0x60002000
+
+flashdev: SPI.Micron_MT25Q @ spi1
+    underlyingMemory: flash_data
+
+// --- Cache / MMU (EXTMEM) ---
+extmem: Miscellaneous.ESP32C3_Cache @ sysbus 0x600C4000
+    Flash: flash_data
+    Xip: xip
+
+// --- Boot-critical config peripherals ---
+gpio: GPIOPort.ESP32C3_GPIO @ sysbus 0x60004000
+    // Board pull-ups: both chip-select lines (12, 21) idle HIGH (deselected)
+    // until the firmware drives them — required so the mux doesn't see two
+    // selected devices at reset — plus the power button (GPIO3, active-low):
+    // idle must read HIGH or waitForPowerRelease() spins forever on a
+    // permanently-"pressed" button.
+    PullUpMask: 0x201008
+    4 -> epd@0
+    21 -> mux@0
+    12 -> mux@1
+    // Pin interrupts (FreeInk waits for the EPD BUSY falling edge via a
+    // NEGEDGE GPIO interrupt); ETS_GPIO_INTR_SOURCE = 16.
+    Irq -> intmatrix@16
+// Software reset actually reboots the machine. ESP32C3_RtcCntl raises its
+// Connections[0] (cpu-reset) when firmware writes OPTIONS0.SW_SYS_RST /
+// SW_PROCPU_RST (esp_restart, ESP.restart, CrossPoint's SilentRestart);
+// without a consumer that pulse goes nowhere and the CPU runs on past the
+// write -- the 'esp_restart never re-boots' gap. ResetPin is the stock
+// IMachine reset hook the model's INTEGRATION TODO asks for. invert: false
+// because rtccntl drives the line HIGH and ResetPin defaults to active-low.
+// rtc_fast (0x50000000) is MappedMemory with no Reset() override, so RTC_NOINIT
+// state (CrossPoint's logMessages ring, silentRebootMagic) survives, as on silicon.
+rtccntl: Miscellaneous.ESP32C3_RtcCntl @ sysbus 0x60008000
+efuse: Miscellaneous.ESP32C3_Efuse @ sysbus 0x60008800
+
+// SYSTEM/clock controller. CPU_INTR_FROM_CPU_0..3 drive interrupt-matrix sources
+// 50..53; source 50 is the FreeRTOS vPortYield that starts the scheduler.
+clk: Miscellaneous.ESP32C3_Clk @ sysbus 0x600C0000
+    0 -> intmatrix@50
+    1 -> intmatrix@51
+    2 -> intmatrix@52
+    3 -> intmatrix@53
+
+// Interrupt matrix: 62 sources -> 31 CPU lines, presented to the core as ESP
+// vectored interrupts (mcause = line, dispatched via mtvec).
+intmatrix: IRQControllers.ESP32C3_IntMatrix @ sysbus 0x600C2000
+    Cpu: cpu
+
+// --- TIMG0/1: RTC clock calibration (esp_clk_init) + watchdog config stubs ---
+timg0: Timers.ESP32C3_Timg @ sysbus 0x6001F000
+
+timg1: Timers.ESP32C3_Timg @ sysbus 0x60020000
+
+// --- SYSTIMER: main high-res counter (esp_timer) + FreeRTOS tick source.
+//     TARGET0/1/2 IRQs -> intmatrix sources 37/38/39 (ETS_SYSTIMER_TARGETn). ---
+systimer: Miscellaneous.ESP32C3_Systimer @ sysbus 0x60023000
+    0 -> intmatrix@37
+    1 -> intmatrix@38
+    2 -> intmatrix@39
+
+// --- HWRNG (WDEV_RND_REG @0x600260b0): pseudo-random source so the bootloader/IDF
+//     entropy warm-up sees changing values instead of a constant. ---
+rng: Miscellaneous.ESP32C3_Rng @ sysbus 0x60026000
+
+// --- SHA accelerator: CPU-driven SHA-256 so the 2nd-stage bootloader's app-image
+//     hash verify passes. ---
+sha: Miscellaneous.ESP32C3_Sha @ sysbus 0x6003B000
+
+// --- AES accelerator: single-block ECB path used by the BLE controller blob
+//     (libbtdm_app.a) for link-layer encryption during SMP pairing. ---
+aes: Miscellaneous.ESP32C3_Aes @ sysbus 0x6003A000
+
+// --- UARTs (ROM prints its banner over UART0) ---
+uart0: UART.ESP32_UART @ sysbus 0x60000000
+uart1: UART.ESP32_UART @ sysbus 0x60010000
+
+// --- Xteink X4 board peripherals ---
+// GP-SPI2: shared display+SD bus (EPD sclk=8 mosi=10 cs=21; SD miso=7 cs=12).
+// The EPD is the single attached device; its CS input (GPIO21) makes it
+// ignore SD-bound traffic (SD probe then fails cleanly -> "no SD" screen).
+gpspi2: SPI.ESP32C3_GPSPI2 @ sysbus 0x60024000
+
+// IO_MUX (pinMode config): plain scratch storage. Pure config block the
+// firmware writes and reads back; mapping it as RAM keeps semantics and
+// silences per-access unhandled-log churn.
+iomux: Memory.MappedMemory @ sysbus 0x60009000
+    size: 0x1000
+
+// USB-Serial-JTAG (HWCDC console): real model, registers as an IUART so the
+// CLI's UART capture attaches to it. ESP32-C3 base 0x60043000, intmatrix
+// source 26 (soc/esp32c3/include/soc/interrupts.h ETS_USB_SERIAL_JTAG_INTR_SOURCE).
+usj: UART.ESP32_UsbSerialJtag @ sysbus 0x60043000
+    -> intmatrix@26
+
+// ASSIST_DEBUG (hardware stack guard): rtos_int_enter/exit program the SP
+// watch bounds on EVERY interrupt — unmapped this was the dominant residual
+// log/alloc churn. Storage semantics; is_debugger_active reads 0 = correct.
+// Also covers the BLE replx's "modem_ce" role at this same address — see the
+// dedupe note at the top of this file.
+assist_debug: Memory.MappedMemory @ sysbus 0x600CE000
+    size: 0x1000
+
+// SAR ADC: button resistor ladder on GPIO1 (ADC1_CH1) + GPIO2 (ADC1_CH2).
+// Idle = 4095 (no button); press injection via ButtonMap GPIO inputs
+// (mid-band raw values from InputManager's ADC_RANGES: Back/Confirm/Left/
+// Right on ch1, Up/Down on ch2). Also stops the main loop's analogRead
+// poll from hammering unhandled regs.
+saradc: Analog.ESP32C3_SarAdc @ sysbus 0x60040000
+    ButtonMap: "0:1:3500;1:1:2600;2:1:1400;3:1:300;4:2:2500;5:2:500"
+
+// Regi2c/analog-calibration master (ADC/temp cal writes during analogRead
+// init, and the RF power-detector calibration the PHY blob runs on every
+// esp_phy_enable). Storage like iomux, EXCEPT the status field at 0x50
+// bits[26:24], which libphy's phy_pwdet.o spins on — see regi2c.py for the
+// disassembly this is derived from. Plain MappedMemory read 0 there, so the
+// blob hung forever in ram_pkdet_vol_start and BLE never came up.
+// This also reclaims the `rf` tracer role that was dropped for colliding here.
+regi2c: Miscellaneous.ESP32C3_AnalogCal @ sysbus 0x6000E000
+
+// CS-routing multiplexer for the shared EPD+SD bus: select 0 = EPD (CS
+// GPIO21), select 1 = SD card (CS GPIO12), both active-low. No CS asserted
+// -> 0xFF (reads as absent device).
+// ActiveLowMask (not init: SetActiveLow) because the CLI's programmatic
+// loader does not execute repl init: sections — with the init: form the mux
+// silently ran active-HIGH, cross-routing EPD and SD traffic.
+mux: SPI.SPIMultiplexer @ gpspi2
+    ActiveLowMask: 0x3
+
+// Scripted I2C0 stub + power-button actor: keeps the X3 probe failing fast
+// (reads 0, no warning churn) and models the human power-on — button
+// (GPIO3, active-low) pressed at boot, released after 5 virt-s — which
+// CrossPoint's verifyPowerButtonWakeup requires on a cold POWERON boot
+// (released-at-boot = straight to deep sleep). Self-arms on the firmware's
+// first i2c0 access (init-armed scripted timers are lost in the CLI boot
+// flow). The earlier SPI2 pulser was dropped: the Arduino HAL polls
+// CMD.USR, no spi_master ISR is involved.
+// Lines 1..6 press the ADC-ladder buttons (saradc ButtonMap inputs 0..5 =
+// Back/Confirm/Left/Right/Up/Down) for the scripted UI demo sequence.
+// (This stays instead of the BLE replx's ESP32C3_I2C @ same address — see
+// the dedupe note at the top of this file.)
+i2c0: Scripted.ScriptedPeripheral @ sysbus 0x60013000
+    size: 0x1000
+    numberOfInterrupts: 8
+    file: "xteink_board_helper_boot.py"
+    0 -> gpio@3
+    1 -> saradc@0
+    2 -> saradc@1
+    3 -> saradc@2
+    4 -> saradc@3
+    5 -> saradc@4
+    6 -> saradc@5
+    7 -> gpio@20
+
+// SSD1677 e-paper, 800x480 1bpp. DC=GPIO4, BUSY=GPIO6; CS handled by mux.
+// Each MASTER_ACTIVATION refresh dumps the BW plane to <DumpPath>-NNN.pbm.
+epd: Video.SSD1677 @ mux 0
+    DumpPath: "hidrun-epd"
+    Busy -> gpio@6
+
+// SD card (SPI mode) backed by a FAT32 image (books + .crosspoint/ cache).
+// The path resolves against the run directory: place (or let the model
+// create) `sdcard.img` where you run `sim`. An empty/absent image boots to
+// the firmware's "SD card error" screen; format it FAT32 and drop EPUBs on
+// it for the full experience.
+sd: SD.SDCard @ mux 1
+    imageFile: "sdcard-f16-32k.img"
+    capacity: 0xA000000
+    spiMode: true
+// NOTE: ESP32C3_I2C @ 0x60013000 wedges machine startup (pre-banner) on this
+// build — X4 has no I2C devices, so it stays off; investigate before S3 boards.
+
+// ===== BLE radio block set (merged from ESP32C3_ble.replx, Track 2 M1-M6) =====
+// RW-BLE v9 LL-MAC core. IRQ lines -> interrupt matrix: RWBLE=8, RWBT=7, BT_MAC=4, BT_BB=5.
+radio: Wireless.ESP32C3_Radio @ sysbus 0x60031000
+    0 -> intmatrix@8
+    1 -> intmatrix@7
+    2 -> intmatrix@4
+    3 -> intmatrix@5
+
+// Surrounding BLE/PHY register regions — scripted tracers (store+read+log) so the
+// controller/PHY blob doesn't hard-fault on unmapped access, and the fault-loop can
+// see what it polls. Promote to C# behaviour as spins are found. `bletrace.py`
+// reconstructed for this rundir (the original ~/.claude/jobs/bd9fca3c/tmp/bletrace.py
+// scratch file no longer exists anywhere on disk — see RUN.md deviations).
+btmac: Scripted.ScriptedPeripheral @ sysbus 0x60011000
+    size: 0x1000
+    numberOfInterrupts: 0
+    file: "scanwatch.py"
+
+fe2: Scripted.ScriptedPeripheral @ sysbus 0x60005000
+    size: 0x1000
+    numberOfInterrupts: 0
+    file: "bletrace.py"
+
+// Storage like the other tracers, plus the RX I/Q-estimation done bit that
+// libphy's phy_rx_cal.o / ram_iq_est_enable spins on. Was fe.py; promoted to C#
+// now that the calibration set is known to be three registers.
+fe: Miscellaneous.ESP32C3_PhyFrontEnd @ sysbus 0x60006000
+
+// `rf` @ 0x6000E000 dropped here (collides with `regi2c` above) — see the
+// dedupe note at the top of this file.
+
+llcoex: Scripted.ScriptedPeripheral @ sysbus 0x60035000
+    size: 0x1000
+    numberOfInterrupts: 0
+    file: "bletrace.py"
+
+nrx: Scripted.ScriptedPeripheral @ sysbus 0x6001C000
+    size: 0x1000
+    numberOfInterrupts: 0
+    file: "bletrace.py"
+
+// BLE exchange memory (EM) — dedicated BLE MAC RAM the controller + PHY use for
+// descriptors / RF-EM coefficients. Base 0x3fc00000 baked into libbtdm_app.a /
+// r_rf_em_init (plf_funcs[188] returns EM_base+offset). Not in qemu's map (no BLE).
+bleem: Memory.MappedMemory @ sysbus 0x3FC00000
+    size: 0x4000
+
+// Scripted BLE HID page-turner (no firmware): joins the BLE medium as the
+// second radio via the scenario's media list. GATT comes from ble_hid_peer.py.
+blepeer: Wireless.ScriptedBlePeer @ sysbus 0x21000000
+    file: "ble_hid_peer.py"
+    DeviceName: "PageTurner"
+    ServiceUuids: "1812"
