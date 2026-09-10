@@ -121,10 +121,28 @@ class Ring:
 
         The window only holds 16 lines, so a burst between calls is lost -- this
         de-duplicates, it does not reconstruct a full transcript.
+
+        Reboot-aware: boot is deterministic, so after a warm reset (e.g.
+        CrossPoint's SilentRestart) the new boot lines are byte-identical to
+        the first boot's and content-dedup would swallow them -- a run that
+        rebooted would look like a run that went silent. `logHead` moving
+        backwards, or the magic being re-initialised, marks a reboot; the seen
+        set is cleared and a synthetic marker line is emitted so callers can
+        count reboots without guessing from boot-time text.
         """
+        head = self._u32(sim, self.head)
+        last = getattr(self, "_last_head", None)
+        rebooted = last is not None and head < last and (last - head) > 1
+        self._last_head = head
         current = self.lines(sim)
-        fresh = [l for l in current if l not in self._seen]
-        self._seen = (self._seen + fresh)[-256:]
+        if rebooted:
+            self._seen = []
+            self.reboots = getattr(self, "reboots", 0) + 1
+            fresh = ["<<< RING: logHead went %d -> %d: warm reboot #%d >>>" % (last, head, self.reboots)]
+        else:
+            fresh = []
+        fresh += [l for l in current if l not in self._seen]
+        self._seen = (self._seen + [l for l in fresh if not l.startswith("<<<")])[-256:]
         return fresh
 
     def head_index(self, sim) -> int:
