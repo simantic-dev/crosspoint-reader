@@ -34,7 +34,8 @@ controlPort: {PORT}
 SYMS = ["app_main", "ReaderActivity::onEnter", "EpubReaderActivity::loadBook", "GfxRenderer::displayBuffer",
         "EpubReaderMenuActivity::render", "EpubReaderMenuActivity::activateIndex",
         "silentRestartToReader", "esp_restart",
-        "bleinput::ensureStarted", "bleinput::stop", "freeink::BleKeyboardHost::begin", "logPrintf"]
+        "bleinput::ensureStarted", "bleinput::stop", "freeink::BleKeyboardHost::begin", "logPrintf",
+        "SettingsManager::saveToFile"]
 SYMS += [x for x in os.environ.get("EXTRA_SYMS", "").split(",") if x]
 cmd = [SIM, "--scenario", "trace-toggle.yaml", "--timeout", "900", "--show-renode-logs"]
 for s in SYMS: cmd += ["--trace-symbol", s]
@@ -142,6 +143,54 @@ act = [a for _, sym, a in seen if sym.startswith("EpubReaderMenuActivity::activa
 log("activateIndex args:", act[-1] if act else None)
 row = int(re.search(r"a1=0x([0-9A-F]+)", act[-1]).group(1), 16) if act else -1
 if row != BT_ROW: sys.exit(f"activated row {row}, wanted {BT_ROW}: a press was dropped or the menu differs; not proceeding blind")
+def ring_since(t):
+    """Decoded RTC-ring lines stamped after virtual time t (needs the ring watches)."""
+    import subprocess
+    txt = subprocess.run([sys.executable, str(HERE/"ring_from_memtrace.py"), str(OUT)], capture_output=True, text=True).stdout
+    out = []
+    for l in txt.splitlines():
+        mm = re.match(r"\[\s*(\d+\.\d+)s\] (.*)", l)
+        if mm and float(mm.group(1)) >= t: out.append(mm.group(2))
+    return out
+# The row index of TOGGLE_BLUETOOTH moves with the book (FOOTNOTES/BOOKMARKS rows
+# are conditional), so verify the ACTION, not the index: the toggle stays in the
+# menu and writes settings; any other row leaves for an activity, which the ring
+# reports about 1.1 s of virtual time later (after the menu's own e-ink refresh).
+def decide(t_act, window=3.0):
+    while vnow - t_act < window:
+        poll(); drain(s)
+        lines = ring_since(t_act)
+        if count("SettingsManager::saveToFile") >= 1 or any("[ERM]" in l or "[BLELC]" in l for l in lines): return "toggle"
+        ent = [l for l in lines if "Entering activity" in l]
+        if ent: return ent[0]
+        time.sleep(0.2)
+    return "neither"
+t_act = seen[-1][0]; last_row = -1
+for attempt in range(4):
+    verdict = decide(t_act)
+    if verdict == "toggle":
+        log("row", row, "is the Bluetooth toggle (settings saved, stayed in menu)"); break
+    if verdict == "neither":
+        log("row", row, "produced neither a settings save nor an activity within 3 s virtual; treating as the toggle"); break
+    log("row", row, "opened", verdict[:50], "-> not the toggle; back to the menu, then row", row + 1)
+    press(s, "back")
+    t_back = vnow
+    wait_for(lambda: any("Entering activity: EpubReaderMenu" in l for l in ring_since(t_back)), "menu re-entered", 60)
+    # the re-entered menu repaints by itself; let that settle so it is not
+    # mistaken for the first down's repaint (which cost one row per retry)
+    wait_quiet("EpubReaderMenuActivity::render", quiet=2.5, limit=60)
+    # selection restarts at row 0 when the menu is re-entered: count down from the top;
+    # a repeat of the same wrong row means a press was lost, so add one
+    extra = 1 if attempt > 0 and row == last_row else 0
+    last_row = row
+    for i in range(row + 1 + extra):
+        n = count("EpubReaderMenuActivity::render"); press(s, "down")
+        wait_for(lambda: count("EpubReaderMenuActivity::render") > n, f"menu render after down #{i+1}", 30)
+    nact = count("EpubReaderMenuActivity::activateIndex"); press(s, "confirm")
+    wait_for(lambda: count("EpubReaderMenuActivity::activateIndex") > nact, "activateIndex", 30)
+    act = [a for _, sym, a in seen if sym.startswith("EpubReaderMenuActivity::activateIndex")]
+    row = int(re.search(r"a1=0x([0-9A-F]+)", act[-1]).group(1), 16); t_act = seen[-1][0]
+    log("activated row", row)
 # The restart call lands ~20 ms of virtual time after activateIndex; give it
 # half a virtual second before concluding the heap was above the floor.
 t_act = vnow

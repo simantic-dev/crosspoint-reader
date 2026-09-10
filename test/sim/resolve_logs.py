@@ -16,8 +16,14 @@ def cstr(addr):
             i = off + (addr - vma); j = data.index(b"\0", i)
             return data[i:j].decode("utf-8", "replace")
     return f"<0x{addr:x}>"
-TR = re.compile(r"^\[(\d+\.\d+)s\] \(TRACE\) logPrintf .* a0=0x([0-9A-F]+) a1=0x([0-9A-F]+) a2=0x([0-9A-F]+)")
+TR = re.compile(r"^\[(\d+\.\d+)s\] \(TRACE\) logPrintf .* a0=0x([0-9A-F]+) a1=0x([0-9A-F]+) a2=0x([0-9A-F]+) a3=0x([0-9A-F]+)")
+def in_rodata(a): return any(vma <= a < vma + size for vma, size, _ in secs)
 for l in open(out, errors="replace"):
     m = TR.match(l)
     if m:
-        print(f"[{float(m.group(1)):9.3f}s] [{cstr(int(m.group(2),16))}] [{cstr(int(m.group(3),16))}] {cstr(int(m.group(4),16))}")
+        fmt = cstr(int(m.group(4), 16)); a3 = int(m.group(5), 16)
+        # one %s whose argument is a string literal (activity names, paths) is
+        # recoverable from a3; numeric %u/%d args never are from an entry trace
+        if fmt.count("%") == 1 and "%s" in fmt and in_rodata(a3):
+            fmt = fmt.replace("%s", cstr(a3))
+        print(f"[{float(m.group(1)):9.3f}s] [{cstr(int(m.group(2),16))}] [{cstr(int(m.group(3),16))}] {fmt}")
