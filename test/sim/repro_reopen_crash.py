@@ -173,6 +173,16 @@ else:
           time.sleep(0.2)
       log("row", took, "->", verdict[:60])
       if "Entering activity: Home" in verdict: break
+      if verdict == "neither":
+          # the row popped the menu without opening anything (Sync, Delete cache):
+          # we are back in the reader; reopen the menu and try one row higher
+          wait_quiet("GfxRenderer::displayBuffer", quiet=2.0, limit=60)
+          for a2 in range(3):
+              press(s, "confirm", hold=0.6)
+              if wait_for(lambda: any("Entering activity: EpubReaderMenu" in l for l in ring_since(t_act + 0.5)), "menu reopened", 25): break
+          wait_quiet("EpubReaderMenuActivity::render", quiet=2.5, limit=60)
+          row = took - 1
+          continue
       if "[ERM]" in verdict or any("[ERM]" in l or "[BLELC]" in l for l in ring_since(t_act)):
           sys.exit("hit the Bluetooth toggle instead of Go Home; aborting to keep BLE out of this experiment")
       press(s, "back")
