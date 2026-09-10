@@ -137,51 +137,64 @@ p0 = count("GfxRenderer::displayBuffer")
 wait_for(lambda: count("GfxRenderer::displayBuffer") > p0, "first page painted", 900)
 wait_quiet("GfxRenderer::displayBuffer", quiet=6.0, limit=600)
 log("reader settled at virtual", f"{vnow:.3f}")
-for attempt in range(3):
+if os.environ.get("NO_HOME"):
+    # control: never leave the reader; let the first, unsuspended build run to
+    # its end (or its abort) and report the same way
+    t_reopen = vnow
+    log("NO_HOME: waiting for the first build to finish or abort")
+    t0 = time.time()
+    while time.time() - t0 < 1200:
+        poll(); drain(s)
+        if count("panic_abort") + count("abort") + count("esp_restart") >= 1: break
+        if "abort() was called" in uart_text(t_reopen): break
+        if any("build complete" in l.lower() or "Section build finished" in l for l in ring_since(t_reopen)): break
+        time.sleep(0.5)
+else:
+  for attempt in range(3):
     press(s, "confirm", hold=0.6)
     if wait_for(lambda: count("EpubReaderMenuActivity::render") >= 1, "menu render", 25): break
-else: sys.exit("menu never opened")
-row = int(os.environ.get("HOME_ROW", "12"))
-def goto_row(r):
-    for i in range(r):
-        n = count("EpubReaderMenuActivity::render"); press(s, "down")
-        wait_for(lambda: count("EpubReaderMenuActivity::render") > n, f"menu render after down #{i+1}", 30)
-    nact = count("EpubReaderMenuActivity::activateIndex"); press(s, "confirm")
-    wait_for(lambda: count("EpubReaderMenuActivity::activateIndex") > nact, "activateIndex", 30)
-    act = [a for _, sym, a in seen if sym.startswith("EpubReaderMenuActivity::activateIndex")]
-    return int(re.search(r"a1=0x([0-9A-F]+)", act[-1]).group(1), 16), seen[-1][0]
-for attempt in range(4):
-    took, t_act = goto_row(row)
-    verdict = "neither"
-    while vnow - t_act < 3.0:
-        poll(); drain(s)
-        ent = [l for l in ring_since(t_act) if "Entering activity" in l]
-        if ent: verdict = ent[0]; break
-        time.sleep(0.2)
-    log("row", took, "->", verdict[:60])
-    if "Entering activity: Home" in verdict: break
-    if "[ERM]" in verdict or any("[ERM]" in l or "[BLELC]" in l for l in ring_since(t_act)):
-        sys.exit("hit the Bluetooth toggle instead of Go Home; aborting to keep BLE out of this experiment")
-    press(s, "back")
-    tb = vnow
-    wait_for(lambda: any("Entering activity: EpubReaderMenu" in l for l in ring_since(tb)), "menu re-entered", 60)
-    wait_quiet("EpubReaderMenuActivity::render", quiet=2.5, limit=60)
-    row = took + (2 if "QrDisplay" in verdict else 1)
-else: sys.exit("could not find Go Home")
-t_home = vnow
-wait_quiet("GfxRenderer::displayBuffer", quiet=2.0, limit=120)
-log("at Home; reopening the recent book")
-press(s, "confirm", hold=0.6)
-t_reopen = vnow
-wait_for(lambda: count("ReaderActivity::onEnter") >= 2, "reader re-entered", 120)
-log("waiting for the resumed build to finish or abort")
-t0 = time.time()
-while time.time() - t0 < 900:
-    poll(); drain(s)
-    if count("panic_abort") + count("abort") + count("esp_restart") >= 1: break
-    if "abort() was called" in uart_text(t_reopen): break
-    if any("Section build complete" in l or "build complete" in l.lower() for l in ring_since(t_reopen)): break
-    time.sleep(0.5)
+  else: sys.exit("menu never opened")
+  row = int(os.environ.get("HOME_ROW", "12"))
+  def goto_row(r):
+      for i in range(r):
+          n = count("EpubReaderMenuActivity::render"); press(s, "down")
+          wait_for(lambda: count("EpubReaderMenuActivity::render") > n, f"menu render after down #{i+1}", 30)
+      nact = count("EpubReaderMenuActivity::activateIndex"); press(s, "confirm")
+      wait_for(lambda: count("EpubReaderMenuActivity::activateIndex") > nact, "activateIndex", 30)
+      act = [a for _, sym, a in seen if sym.startswith("EpubReaderMenuActivity::activateIndex")]
+      return int(re.search(r"a1=0x([0-9A-F]+)", act[-1]).group(1), 16), seen[-1][0]
+  for attempt in range(4):
+      took, t_act = goto_row(row)
+      verdict = "neither"
+      while vnow - t_act < 3.0:
+          poll(); drain(s)
+          ent = [l for l in ring_since(t_act) if "Entering activity" in l]
+          if ent: verdict = ent[0]; break
+          time.sleep(0.2)
+      log("row", took, "->", verdict[:60])
+      if "Entering activity: Home" in verdict: break
+      if "[ERM]" in verdict or any("[ERM]" in l or "[BLELC]" in l for l in ring_since(t_act)):
+          sys.exit("hit the Bluetooth toggle instead of Go Home; aborting to keep BLE out of this experiment")
+      press(s, "back")
+      tb = vnow
+      wait_for(lambda: any("Entering activity: EpubReaderMenu" in l for l in ring_since(tb)), "menu re-entered", 60)
+      wait_quiet("EpubReaderMenuActivity::render", quiet=2.5, limit=60)
+      row = took + (2 if "QrDisplay" in verdict else 1)
+  else: sys.exit("could not find Go Home")
+  t_home = vnow
+  wait_quiet("GfxRenderer::displayBuffer", quiet=2.0, limit=120)
+  log("at Home; reopening the recent book")
+  press(s, "confirm", hold=0.6)
+  t_reopen = vnow
+  wait_for(lambda: count("ReaderActivity::onEnter") >= 2, "reader re-entered", 120)
+  log("waiting for the resumed build to finish or abort")
+  t0 = time.time()
+  while time.time() - t0 < 900:
+      poll(); drain(s)
+      if count("panic_abort") + count("abort") + count("esp_restart") >= 1: break
+      if "abort() was called" in uart_text(t_reopen): break
+      if any("Section build complete" in l or "build complete" in l.lower() for l in ring_since(t_reopen)): break
+      time.sleep(0.5)
 stop(); poll()
 print("\n=== RESULT ===")
 print("abort/panic hits:", count("panic_abort"), count("abort"), "| esp_restart:", count("esp_restart"))
