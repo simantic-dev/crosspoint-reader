@@ -1,0 +1,10 @@
+# plain scenario + companion symbol ELF: the payload the ROM boots is a stripped
+# flash container; symbols come from the PlatformIO build of the SAME firmware.
+machines:
+  xteink:
+    repl: board-featbt-main.replx
+    elf: ../payloads/crosspoint-featble-sim.elf
+    symbolsElfPath: ../../.pio/build/sim/firmware.elf
+media:
+  - type: ble
+    connect: [xteink.radio, xteink.blepeer]

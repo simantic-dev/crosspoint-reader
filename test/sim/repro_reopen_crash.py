@@ -17,7 +17,7 @@ import socket, base64, os, json, time, re, subprocess, sys, pathlib
 HERE = pathlib.Path(__file__).resolve().parent
 SIM = os.environ.get("SIMANTIC_SIM", "sim")   # needs a CLI with symbolsElfPath support
 PORT = int(os.environ.get("PORT", 21239)); BT_ROW = int(os.environ.get("BT_ROW", 11))
-REPLX = os.environ.get("REPLX", "board-featbt-f16-32k.replx")
+REPLX = os.environ.get("REPLX", "board-featbt-main.replx")
 env = dict(os.environ)
 OUT = HERE/"output.txt"; OUT.unlink(missing_ok=True)
 (HERE/"trace-reopen.yaml").write_text(f"""machines:
