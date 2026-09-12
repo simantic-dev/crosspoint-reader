@@ -14,10 +14,13 @@ No sleeps for pacing: every step waits for the trace line that proves the
 previous one landed.  Presses go over the control WebSocket with ids.
 """
 import socket, base64, os, json, time, re, subprocess, sys, pathlib
+import guard
 HERE = pathlib.Path(__file__).resolve().parent
 SIM = os.environ.get("SIMANTIC_SIM", "sim")   # needs a CLI with symbolsElfPath support
 PORT = int(os.environ.get("PORT", 21239)); BT_ROW = int(os.environ.get("BT_ROW", 11))
 REPLX = os.environ.get("REPLX", "board-featbt-main.replx")
+BASE_IMG = HERE/"sdcard-f16-32k.img"; RUN_IMG = HERE/"sdcard-run.img"
+REPLX = guard.pristine_platform(HERE/REPLX, BASE_IMG, RUN_IMG)
 env = dict(os.environ)
 OUT = HERE/"output.txt"; OUT.unlink(missing_ok=True)
 (HERE/"trace-toggle.yaml").write_text(f"""machines:
@@ -39,7 +42,7 @@ SYMS = ["app_main", "ReaderActivity::onEnter", "EpubReaderActivity::loadBook", "
 SYMS += [x for x in os.environ.get("EXTRA_SYMS", "").split(",") if x]
 cmd = [SIM, "--scenario", "trace-toggle.yaml", "--timeout", "900", "--show-renode-logs"]
 for s in SYMS: cmd += ["--trace-symbol", s]
-cmd += [a for a in os.environ.get("EXTRA_ARGS", "--memory-stats 100ms --trace-memory logHead --trace-memory logMessages:4096").split() if a]   # e.g. "--trace-memory logHead --trace-memory logMessages:4096"
+cmd += guard.observer_args()
 p = subprocess.Popen(cmd, cwd=HERE, env=env, stdout=open(HERE/"trace-toggle.log","w"), stderr=subprocess.STDOUT, start_new_session=True)
 import signal, atexit
 def stop():
@@ -53,7 +56,7 @@ def log(*a): print(f"[{time.time()-T0:6.1f}s]", *a, flush=True)
 def ws():
     for _ in range(90):
         try: s = socket.create_connection(("localhost", PORT), timeout=5); break
-        except OSError: time.sleep(1)
+        except OSError: time.sleep(1)  # wall-ok: host port
     else: sys.exit("control port never opened")
     key = base64.b64encode(os.urandom(16)).decode()
     s.send((f"GET /control HTTP/1.1\r\nHost: localhost:{PORT}\r\nUpgrade: websocket\r\n"
@@ -69,6 +72,7 @@ def drain(s):
     except (socket.timeout, OSError): pass
 TR = re.compile(r"^\[(\d+\.\d+)s\] \(TRACE\) (\S+)(.*)$")
 TS = re.compile(r"^\[(\d+\.\d+)s\]")
+gate = guard.RatioGate(lambda: vnow)
 vnow = 0.0                                  # virtual time of the newest line seen
 seen = []            # (vt, symbol, args)
 pos = 0
@@ -244,3 +248,5 @@ for vt, sym, a in seen:
         shown += 1
         if shown > 3: continue
     print(f"  {vt:9.3f}s {sym} {a[:60]}")
+print(guard.observer_note())
+sys.exit(gate.check())

@@ -22,3 +22,4 @@ trace-toggle.yaml
 trace-toggle.log
 trace-reopen-hid.yaml
 trace-reopen-hid.log
+*-run.replx

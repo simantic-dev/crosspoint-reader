@@ -47,6 +47,7 @@ Env: SIMANTIC_SIM, PORT, REPLX, PAYLOAD, EXTRA_SYMS, EXTRA_ARGS, HOME_ROW,
 WATCH_V (virtual seconds to watch after the reopen, default 150).
 """
 import socket, base64, os, json, time, re, subprocess, sys, pathlib
+import guard
 HERE = pathlib.Path(__file__).resolve().parent
 SIM = os.environ.get("SIMANTIC_SIM", "sim")
 PORT = int(os.environ.get("PORT", 21240))
@@ -64,10 +65,7 @@ env = dict(os.environ)
 # pristine image (bible.epub + state.json + the seeded bleKeyMap, no cache) so
 # every run starts from the same device state.
 BASE_IMG = HERE/"sdcard-hidrun-base.img"; RUN_IMG = HERE/"sdcard-hidrun.img"
-if BASE_IMG.exists():
-    import shutil; shutil.copyfile(BASE_IMG, RUN_IMG)
-else:
-    sys.exit(f"no pristine SD image at {BASE_IMG}; see SEED_SETTINGS in this file")
+REPLX = guard.pristine_platform(HERE/REPLX, BASE_IMG, RUN_IMG)
 OUT = HERE/"output.txt"; OUT.unlink(missing_ok=True)
 (HERE/"trace-reopen-hid.yaml").write_text(f"""machines:
   xteink:
@@ -89,7 +87,7 @@ SYMS = ["app_main", "ReaderActivity::onEnter", "EpubReaderActivity::loadBook", "
 SYMS += [x for x in os.environ.get("EXTRA_SYMS", "").split(",") if x]
 cmd = [SIM, "--scenario", "trace-reopen-hid.yaml", "--timeout", "1800", "--show-renode-logs"]
 for s in SYMS: cmd += ["--trace-symbol", s]
-cmd += [a for a in os.environ.get("EXTRA_ARGS", "--memory-stats 100ms --trace-memory logHead --trace-memory logMessages:4096").split() if a]
+cmd += guard.observer_args()
 p = subprocess.Popen(cmd, cwd=HERE, env=env, stdout=open(HERE/"trace-reopen-hid.log","w"), stderr=subprocess.STDOUT, start_new_session=True)
 import signal, atexit
 def stop():
@@ -103,7 +101,7 @@ def log(*a): print(f"[{time.time()-T0:6.1f}s]", *a, flush=True)
 def ws():
     for _ in range(90):
         try: s = socket.create_connection(("localhost", PORT), timeout=5); break
-        except OSError: time.sleep(1)
+        except OSError: time.sleep(1)  # wall-ok: host port
     else: sys.exit("control port never opened")
     key = base64.b64encode(os.urandom(16)).decode()
     s.send((f"GET /control HTTP/1.1\r\nHost: localhost:{PORT}\r\nUpgrade: websocket\r\n"
@@ -120,6 +118,7 @@ def drain(s):
 TR = re.compile(r"^\[(\d+\.\d+)s\] \(TRACE\) (\S+)(.*)$")
 TS = re.compile(r"^\[(\d+\.\d+)s\]")
 vnow = 0.0
+gate = guard.RatioGate(lambda: vnow)
 seen = []
 pos = 0
 def poll():
@@ -358,7 +357,8 @@ if os.environ.get("LIGHT_BOOK"):
     for vt, l in ring_all():
         if vt >= t_light and any(k in l for k in ("Framebuffer", "BLELC", "BLEUI", "Entering activity", "Rendered page", "Page ")):
             print(f"   [{vt:9.3f}s] {l[:140]}")
-    sys.exit(0)
+    print(guard.observer_note())
+    sys.exit(gate.check())
 
 # Home restores the row it was last on, and we arrive from Settings -- which is
 # Home's LAST row -- so a bare confirm re-enters Settings. Continue Reading is
@@ -380,7 +380,7 @@ for attempt in range(5):
     press(s, "down")                # step one row (wraps onto Continue Reading)
     wait_quiet("GfxRenderer::displayBuffer", quiet=2.0, limit=60)
 else:
-    log("never reopened the book from Home")
+    guard.require(False, "never reopened the book from Home")
 t_reopen = vnow
 log("watching the resumed build for", WATCH_V, "virtual seconds")
 t0 = time.time()
@@ -393,6 +393,7 @@ stop(); poll()
 
 # ---- report ------------------------------------------------------------------
 print("\n=== RESULT ===")
+print(guard.observer_note())
 print("abort/panic hits:", count("panic_abort"), count("abort"), "| esp_restart:", count("esp_restart"))
 print("BLE: ensureStarted", count("bleinput::ensureStarted"), "| host begin", count("freeink::BleKeyboardHost::begin"),
       "| stop", count("bleinput::stop"))
@@ -424,3 +425,4 @@ if "abort() was called" in u:
     out = subprocess.run([a2l, "-f", "-C", "-e", elf] + addrs, capture_output=True, text=True).stdout.splitlines()
     for i in range(0, len(out), 2):
         print(f"   {addrs[i//2]}  {out[i][:90]}  {out[i+1].split('/')[-1][:50]}")
+sys.exit(gate.check())
