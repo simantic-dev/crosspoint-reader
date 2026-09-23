@@ -141,6 +141,20 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   freeink::PowerManager::deepSleepUntilPowerButton();
 }
 
+// USB-attach wake source for light sleep: the VBUS usbDetect line where a board
+// has one, else the charger STAT pin (X4 Pro: GPIO21, HIGH while charging). STAT
+// goes quiet at charge termination, but by then update()'s SOF check already
+// holds sleep off, so the pin only needs to cover the plug-in transient.
+static int8_t usbWakePin() {
+  if (BoardConfig::ACTIVE.usbDetect >= 0) return BoardConfig::ACTIVE.usbDetect;
+  return BoardConfig::ACTIVE.batteryChargeStatus;
+}
+
+static gpio_int_type_t usbWakeLevel() {
+  if (BoardConfig::ACTIVE.usbDetect >= 0) return GPIO_INTR_HIGH_LEVEL;
+  return BoardConfig::ACTIVE.batteryChargeStatusActiveHigh ? GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL;
+}
+
 bool HalPowerManager::lightSleep(const HalGPIO& gpio) const {
   // A performance Lock means a render (or similar) task is mid-flight; light sleep
   // freezes the whole chip, so it would stall that task.
@@ -193,9 +207,9 @@ bool HalPowerManager::lightSleep(const HalGPIO& gpio) const {
   // slice: the next poll then sees USB and declines all further sleep, closing
   // the mid-slice attach window the cached guard can't cover. X4's usbDetect is
   // a real VBUS-driven GPIO (HIGH = attached); X3 has none (usbDetect < 0).
-  const int8_t usbPin = BoardConfig::ACTIVE.usbDetect;
+  const int8_t usbPin = usbWakePin();
   if (usbPin >= 0) {
-    gpio_wakeup_enable(static_cast<gpio_num_t>(usbPin), GPIO_INTR_HIGH_LEVEL);
+    gpio_wakeup_enable(static_cast<gpio_num_t>(usbPin), usbWakeLevel());
     esp_sleep_enable_gpio_wakeup();
   }
 
@@ -281,9 +295,9 @@ bool HalPowerManager::onEinkBusyWaitSlice(const int8_t busyPin, const uint8_t bu
   }
   // Wake on USB attach mid-refresh too, so a plug-in never sleeps through the
   // enumeration transient (see lightSleep(); X4 usbDetect only, X3 < 0).
-  const int8_t usbPin = BoardConfig::ACTIVE.usbDetect;
+  const int8_t usbPin = usbWakePin();
   if (usbPin >= 0) {
-    gpio_wakeup_enable(static_cast<gpio_num_t>(usbPin), GPIO_INTR_HIGH_LEVEL);
+    gpio_wakeup_enable(static_cast<gpio_num_t>(usbPin), usbWakeLevel());
   }
   esp_sleep_enable_gpio_wakeup();
   esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(BUSY_SLEEP_SLICE_MS) * 1000ULL);
