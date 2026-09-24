@@ -101,6 +101,8 @@ bool HalDisplay::isInverted() const { return einkDisplay.isInverted(); }
 
 void HalDisplay::deepSleep() { einkDisplay.deepSleep(); }
 
+bool HalDisplay::isRefreshPending() const { return einkDisplay.isRefreshPending(); }
+
 void HalDisplay::setBusyWaitSliceHook(bool (*sliceHook)(int8_t busyPin, uint8_t busyLevel)) {
   einkDisplay.setBusyWaitSliceHook(sliceHook);
 }

@@ -1,3 +1,4 @@
+#define CROSSPOINT_LIGHT_SLEEP_OFF 1  // TEMP control build
 #include <Arduino.h>
 #include <BoardConfig.h>
 #include <Epub.h>
@@ -396,8 +397,12 @@ void setup() {
   // Light-sleep through the render task's e-ink BUSY wait (0.3-2 s of pure pin
   // polling) in short slices, waking exactly on the BUSY pin's completion level
   // (falls back to plain polling when WiFi/USB blocks light sleep)
+#if !FREEINK_DEVICE_X4PRO
+  // ponytail: off on the X4 Pro — sleeping through the SSD1677 BUSY wait left
+  // heavy ghosting on hardware; idle light sleep alone is the test first.
   display.setBusyWaitSliceHook(
       [](int8_t busyPin, uint8_t busyLevel) { return powerManager.onEinkBusyWaitSlice(busyPin, busyLevel); });
+#endif
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -861,7 +866,10 @@ void loop() {
         // a tap shorter than the 50 ms cadence would otherwise land in a single
         // sample and be dropped, and every press would commit a slice late.
         delayWallClock(10);
-      } else if (!powerManager.lightSleep(gpio)) {
+      } else if (display.isRefreshPending() || !powerManager.lightSleep(gpio)) {
+        // Refresh in flight: light sleep gates the GPIO edge detector, so the
+        // BUSY-done ISR the async finish waits on would be lost and the next
+        // page write would land on a still-busy panel (ghosting).
         // Light sleep declined = a render Lock, USB, or WiFi is active — the
         // chip is at full clock anyway, so poll at 100 Hz. A 50 ms cadence
         // here dropped sub-slice power taps (a press needs two samples >=5 ms

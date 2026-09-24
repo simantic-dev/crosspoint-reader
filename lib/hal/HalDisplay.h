@@ -61,6 +61,8 @@ class HalDisplay {
   // True when displayBufferAsync() genuinely overlaps (panel driver defers);
   // false where it falls back to a blocking refresh.
   bool supportsAsyncRefresh() const;
+  // True while a deferred (async) refresh is still in flight on the panel.
+  bool isRefreshPending() const;
   // True when an ordinary deferred B/W refresh is suitable as the base for a
   // grayscale pass. X3 needs its controller-specific grayscale base waveform.
   bool supportsAsyncGrayscaleBase() const;
