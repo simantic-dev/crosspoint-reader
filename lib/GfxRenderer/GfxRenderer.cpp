@@ -7,6 +7,7 @@
 #include <HalGPIO.h>
 #include <Logging.h>
 #include <SdCardFont.h>
+#include <ShapedText.h>
 #include <Utf8.h>
 
 #include <algorithm>
@@ -26,6 +27,12 @@ uint8_t resolveSdCardStyle(const SdCardFont& font, const EpdFontFamily::Style st
 
 namespace {
 const char* resolveVisualText(const char* text, std::string& visualBuffer, BidiUtils::BidiBaseDir baseDir);
+
+// Trampoline so ShapedText (which cannot depend on GfxRenderer's headers,
+// see lib/ShapedText/ShapedText.h) can blit through GfxRenderer::drawPixel.
+void plotShapedPixel(const void* renderer, int x, int y, bool state) {
+  static_cast<const GfxRenderer*>(renderer)->drawPixel(x, y, state);
+}
 
 // Appends the shaped visual form of every RTL token in `text` to `shapedOut`.
 // getTextAdvanceX() measures the bidi-reordered, Arabic-shaped codepoint stream,
@@ -605,6 +612,15 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
     return 0;
   }
 
+  // Bengali needs HarfBuzz shaping (conjuncts, reph, reordered vowel signs);
+  // the built-in bitmap fonts don't shape at all. Bypass bidi/fallback
+  // entirely and measure via the SD-card TTF path.
+  if (ShapedText::hasBengali(text) && ShapedText::instance().ready()) {
+    const EpdFontData* fd = fontIt->second.getData(EpdFontFamily::REGULAR);
+    const int pixelSize = fd->ascender + std::abs(fd->descender);
+    return ShapedText::instance().width(text, pixelSize);
+  }
+
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
 
@@ -630,6 +646,21 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
                            const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
+    return;
+  }
+
+  // Bengali needs HarfBuzz shaping; bypass bidi and the CJK-fallback path
+  // entirely (Bengali is LTR and never a fallback target) and draw straight
+  // from the SD-card TTF.
+  if (ShapedText::hasBengali(text) && ShapedText::instance().ready()) {
+    const auto fontIt = fontMap.find(fontId);
+    if (fontIt == fontMap.end()) {
+      LOG_ERR("GFX", "Font %d not found", fontId);
+      return;
+    }
+    const EpdFontData* fd = fontIt->second.getData(EpdFontFamily::REGULAR);
+    const int pixelSize = fd->ascender + std::abs(fd->descender);
+    ShapedText::instance().draw(this, plotShapedPixel, text, x, y + fd->ascender, pixelSize, black);
     return;
   }
 
@@ -2009,6 +2040,15 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 }
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style) const {
+  // Layout measures through this path; Bengali words must use the same shaped
+  // width drawText will paint, or the line breaker packs missing-glyph advances.
+  if (ShapedText::hasBengali(text) && ShapedText::instance().ready()) {
+    const auto fontIt = fontMap.find(fontId);
+    if (fontIt != fontMap.end()) {
+      const EpdFontData* fd = fontIt->second.getData(EpdFontFamily::REGULAR);
+      return ShapedText::instance().width(text, fd->ascender + std::abs(fd->descender));
+    }
+  }
   // Match the font drawText would use for CJK-bearing strings (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
   // Measure the exact codepoint stream drawText renders: bidi-reordered and

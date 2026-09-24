@@ -1,0 +1,4 @@
+{
+  "name": "ShapedText",
+  "description": "HarfBuzz + stb_truetype Bengali shaping/rasterizing path for GfxRenderer"
+}

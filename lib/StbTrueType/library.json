@@ -1,0 +1,8 @@
+{
+  "name": "StbTrueType",
+  "version": "master",
+  "description": "stb_truetype.h single-header TrueType font reader, vendored with its implementation TU",
+  "build": {
+    "includeDir": "."
+  }
+}
