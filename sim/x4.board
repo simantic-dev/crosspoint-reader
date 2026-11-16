@@ -1,0 +1,23 @@
+# Xteink X4: SD card (CS GPIO12) and SSD1677 panel (CS GPIO21, DC GPIO4, BUSY GPIO6) share GP-SPI2.
+# One peer on spi2 reads both chip selects as pads; see peers/x4_spi.py (MODELED SIMPLIFICATION).
+bus: SPI.ScriptedSpiSlave @ spi2
+    file: "sim/peers/x4_spi.py"
+    numberOfGpios: 5
+    2 -> gpio@6
+
+gpio:
+    4 -> bus@1
+    21 -> bus@3
+    12 -> bus@4
+
+# Buttons. Power (GPIO3, active low) is held through the firmware's wake check. The front buttons are an ADC
+# resistor ladder on ADC1 ch1 (GPIO1: back/confirm/left/right) and ch2 (GPIO2: up/down); the peer drives those
+# ADC inputs at full scale when idle and at 0 V to press (0 V reads as RIGHT on GPIO1 and DOWN on GPIO2).
+saradc:
+    fullScale: 3.3
+
+btn: Scripted.ScriptedGpioPeer @ none
+    file: "sim/peers/pin_script.py"
+    config: "{\"idle\": {\"0\": 1}, \"holds\": [{\"line\": 0, \"at_ms\": 1, \"for_ms\": 1500, \"level\": 0}]}"
+    numberOfGpios: 1
+    0 -> gpio@3
