@@ -1,0 +1,9 @@
+# Xteink X4 panel: SSD1677 e-paper on GP-SPI2 (DC GPIO4, BUSY GPIO6), vendored peer in peers/ssd1677.py.
+# DC is the peer's input 1, BUSY its output 2.
+epd: SPI.ScriptedSpiSlave @ spi2
+    file: "sim/peers/ssd1677.py"
+    numberOfGpios: 3
+    2 -> gpio@6
+
+gpio:
+    4 -> epd@1

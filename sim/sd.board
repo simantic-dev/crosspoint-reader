@@ -1,0 +1,17 @@
+# Xteink X4: SSD1677 panel and microSD card share GP-SPI2 (SCLK 8, MOSI 10, MISO 7).
+# Chip selects: EPD CS GPIO21 -> mux slot 0, SD CS GPIO12 -> mux slot 1; both active low. DC GPIO4, BUSY GPIO6.
+bmux: SPI.SPIMultiplexer @ spi2
+    ActiveLowMask: 3
+
+epd: SPI.ScriptedSpiSlave @ bmux 0
+    file: "sim/peers/ssd1677.py"
+    numberOfGpios: 3
+    2 -> gpio@6
+
+sd: SPI.ScriptedSpiSlave @ bmux 1
+    file: "sim/peers/sd_spi.py"
+
+gpio:
+    4 -> epd@1
+    21 -> bmux@0
+    12 -> bmux@1

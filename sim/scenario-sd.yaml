@@ -1,0 +1,3 @@
+# One machine, the unmodified `default` image, panel (and SD card when sd.board is used) wired through the overlay.
+machines:
+  x4: { mcu: ESP32-C3, elf: ../.pio/build/default/firmware.factory.bin, overlay: sd.board }
