@@ -17,6 +17,25 @@ An animated walkthrough of the same five frames is [sim/screenshots/walkthrough.
 Before this work the fork showed one frame, the "SD card error" screen
 ([sim/screenshots/01-sd-card-error-before.png](sim/screenshots/01-sd-card-error-before.png)).
 
+Scenario behind the walkthrough (`sim/x4.board`, from the board file, `sim/peers/*.py` and `sim/drive.py`):
+
+```mermaid
+flowchart LR
+  x4["X4 firmware on simulated ESP32-C3<br/>(CrossPoint default env, unmodified)"]
+  flash(["flash<br/>SPI.Micron_MT25Q"])
+  x4 -- "SPI1" --- flash
+  bus(["x4_spi.py peer on SPI2<br/>splits bytes by chip select"])
+  x4 -- "SPI2: SCLK 8, MOSI 10, MISO 7" --- bus
+  sd(["microSD card<br/>sd_spi.py, FAT image: demo.epub, notes.txt"])
+  epd(["SSD1677 e-paper panel<br/>ssd1677.py, 800x480 BW RAM"])
+  bus -- "CS GPIO12: SD sectors" --- sd
+  bus -- "CS GPIO21 + DC GPIO4: frames, BUSY GPIO6" --- epd
+  pwr(["power button<br/>pin_script.py, GPIO3 low 1.5 s"])
+  x4 -- "GPIO3" --- pwr
+  ctl(["drive.py<br/>front buttons: ADC GPIO1/GPIO2 via control port"])
+  ctl -. "volts on ch1/ch2" .-> x4
+```
+
 ```sh
 sim/build.sh        # PlatformIO build of the unmodified default env
 sim/run.sh          # ~40 s wall: boots, presses buttons, converts frames to PNG in sim/out/, checks activities
