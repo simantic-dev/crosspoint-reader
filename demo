@@ -1,0 +1,14 @@
+#!/bin/sh
+# One command: runs the unmodified CrossPoint firmware on the simulated X4 and prints what the run decoded.
+# Builds the firmware first if it is missing (PlatformIO 6.1.19, see sim/build.sh).
+set -e
+cd "$(dirname "$0")"
+[ -f .pio/build/default/firmware.factory.bin ] || sh sim/build.sh > /dev/null
+sh sim/run.sh > sim/out/demo-check.log 2>&1 || { cat sim/out/demo-check.log; exit 1; }
+echo "CrossPoint firmware (unmodified default env) on simulated ESP32-C3 + X4 peers"
+echo
+grep -E "SD card detected|Entering activity" sim/out/uart.log | sed -E 's/^\[([0-9.]+)s\] \(usj\) \[[0-9]+\] \[DBG\] \[ACT\] /  \1s  /; s/^\[([0-9.]+)s\] \(usj\) \[[0-9]+\] \[SD\] /  \1s  /'
+echo
+echo "  button presses (front buttons, control port): $(grep -c '^pressed' sim/out/drive.log)"
+echo "  panel refreshes captured: $(ls sim/out/epd-*.pbm | wc -l | tr -d ' ')   (frames: sim/out/epd-*.png)"
+echo "  epub sections built: $(grep -c 'Page [0-9]* processed' sim/out/uart.log)"

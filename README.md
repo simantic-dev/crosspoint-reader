@@ -1,5 +1,13 @@
 # CrossPoint Reader
 
+[simantic.com](https://simantic.com) · simulator showcase
+
+![./demo running the unmodified firmware on the simulator](sim/demo.gif)
+
+```sh
+./demo    # builds if needed, runs the firmware, prints what the run decoded (about 45 s wall)
+```
+
 > **Simulator showcase:** this fork runs the firmware on a simulated ESP32-C3 with a simulated SD card, e-paper panel and
 > buttons: home screen, file browser, EPUB reader with page turns. See [sim/README.md](sim/README.md).
 >
