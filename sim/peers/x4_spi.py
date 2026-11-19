@@ -34,6 +34,9 @@ class Slave:
             elif not was and self.sd_cs:
                 self.sd.on_deselect()
 
+    def get_property(self, name):
+        return self.epd.get_property(name)
+
     def on_select(self):
         pass
 

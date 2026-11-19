@@ -1,0 +1,6 @@
+# Interactive: the unmodified `default` image with the SD card and panel (x4.board), no scripted presses, and the
+# control port that sim/reader.html uses (sim/live.sh). Board peers are reachable by name only in a scenario.
+machines:
+  x4: { mcu: ESP32-C3, elf: ../.pio/build/default/firmware.factory.bin, overlay: x4.board }
+controlPort: 21777
+timeout: 86400

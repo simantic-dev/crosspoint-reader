@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossPoint Live</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* layout: the reader held upright on a desk at left, a narrow panel at right; stacks on phones */
+:root {
+  --bg: #e9e6e0; --desk: #dcd8d0; --panel: #f6f4f0; --line: #cfcac1;
+  --fg: #1d1f22; --muted: #6b6f75; --accent: #2f6f62; --case: #2a2c2f; --paper: #f2f0eb;
+  --display: "Space Grotesk", system-ui, sans-serif;
+  --body: Inter, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #121417; --desk: #181b1f; --panel: #1c2024; --line: #2c3237; --fg: #e8ebee; --muted: #949ba3; --accent: #57b7a2; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #121417; --desk: #181b1f; --panel: #1c2024; --line: #2c3237; --fg: #e8ebee; --muted: #949ba3; --accent: #57b7a2; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); }
+.app { min-height: 100%; display: grid; grid-template-columns: 1fr 340px; }
+@media (max-width: 860px) { .app { grid-template-columns: 1fr; } }
+.stage { display: grid; place-items: center; padding: 32px 16px; background: radial-gradient(ellipse at 50% 40%, var(--desk), var(--bg) 75%); }
+.side { background: var(--panel); border-left: 1px solid var(--line); padding: 28px 24px; display: flex; flex-direction: column; gap: 24px; }
+
+/* the device: X4-style reader, buttons along the bottom edge and one on the side */
+.reader { position: relative; width: min(420px, 82vw); background: linear-gradient(160deg, #3a3d41, var(--case) 55%, #1f2123); border-radius: 22px; padding: 22px 20px 18px; box-shadow: 0 28px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08); }
+.screen { background: var(--paper); border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); overflow: hidden; }
+canvas { display: block; width: 100%; aspect-ratio: 480 / 800; }
+.refreshing canvas { animation: flash .35s steps(2) 1; }
+@keyframes flash { 50% { filter: invert(1); } }
+@media (prefers-reduced-motion: reduce) { .refreshing canvas { animation: none; } }
+.keys { display: grid; grid-template-columns: repeat(4, 1fr) 14px repeat(2, 1fr); gap: 8px; margin-top: 14px; align-items: center; }
+.key { height: 30px; border-radius: 7px; border: 0; cursor: pointer; background: linear-gradient(#4a4e53, #34373b); color: #c9cdd2; font: 600 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; box-shadow: 0 2px 0 #1a1b1d; }
+.key:active, .key.held { transform: translateY(2px); box-shadow: none; background: #5a5f65; }
+.key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.power { position: absolute; right: -7px; top: 18%; width: 7px; height: 54px; border-radius: 0 6px 6px 0; border: 0; cursor: pointer; background: linear-gradient(90deg, #2a2c2f, #4a4e53); }
+.power:active, .power.held { right: -4px; }
+.power:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+h1 { font: 700 26px/1.15 var(--display); margin: 0; }
+.sub { color: var(--muted); margin: 6px 0 0; font-size: 14px; }
+.label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.rows { display: grid; gap: 8px; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.row span:last-child { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.pill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.on .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.keymap { color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
+kbd { font-family: var(--mono); font-size: 11px; display: inline-block; min-width: 64px; color: var(--fg); }
+.err { color: #b4552a; font-size: 13px; margin: 0; }
+.foot { margin-top: auto; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="stage">
+    <div class="reader" id="reader">
+      <div class="screen" id="screen"><canvas id="epd" width="480" height="800" aria-label="E-paper screen"></canvas></div>
+      <div class="keys">
+        <button class="key" data-k="back">Back</button>
+        <button class="key" data-k="confirm">OK</button>
+        <button class="key" data-k="left">&larr;</button>
+        <button class="key" data-k="right">&rarr;</button>
+        <span></span>
+        <button class="key" data-k="up">&uarr;</button>
+        <button class="key" data-k="down">&darr;</button>
+      </div>
+      <button class="power" id="power" aria-label="Power button"></button>
+    </div>
+  </main>
+  <aside class="side">
+    <div>
+      <h1>CrossPoint</h1>
+      <p class="sub">The CrossPoint e-reader firmware, unmodified, on a simulated ESP32-C3 with an SD card and an SSD1677 e-paper panel. Every image is the panel's own memory at its last refresh.</p>
+    </div>
+    <section>
+      <p class="label">Simulator</p>
+      <div class="rows">
+        <div class="row"><span>Link</span><span class="pill" id="link"><i class="dot"></i><b>connecting</b></span></div>
+        <div class="row"><span>Virtual time</span><span id="vt">-</span></div>
+        <div class="row"><span>Panel refreshes</span><span id="refreshes">0</span></div>
+      </div>
+      <p class="err" id="err" hidden></p>
+    </section>
+    <section class="keymap">
+      <p class="label">Keyboard</p>
+      <span><kbd>&larr; &rarr;</kbd> turn pages</span>
+      <span><kbd>&uarr; &darr;</kbd> move in lists</span>
+      <span><kbd>Enter</kbd> OK</span>
+      <span><kbd>Esc</kbd> back</span>
+    </section>
+    <section class="keymap">
+      <p class="label">On the card</p>
+      <span>demo.epub, notes.txt</span>
+    </section>
+    <p class="foot">Front buttons are a resistor ladder on ADC1 ch1/ch2; each press sets that pin's voltage over control port <span id="port"></span>.</p>
+  </aside>
+</div>
+<script>
+const port = new URLSearchParams(location.search).get("port") || "21777";
+document.getElementById("port").textContent = port;
+const $ = (id) => document.getElementById(id);
+const ctx2d = $("epd").getContext("2d");
+const img = ctx2d.createImageData(480, 800);
+// Volts at the pin per button: the middle of each firmware ADC band (sim/drive.py).
+const IDLE = 3.3;
+const BTN = { back: [1, 2.83], confirm: [1, 2.17], left: [1, 1.2], right: [1, 0], up: [2, 1.81], down: [2, 0] };
+let ws, nextId = 1, pending = new Map(), lastN = -1, busy = false;
+
+function call(kind, peripheral, property, value) {
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) return reject(new Error("not connected"));
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    const body = { peripheral, property, id };
+    if (kind === "set") body.value = value;
+    ws.send(JSON.stringify({ [kind]: body }));
+  });
+}
+function setLink(cls, text) { $("link").className = "pill " + cls; $("link").querySelector("b").textContent = text; }
+
+// Panel memory is 800 wide x 480 rows; the X4 is held with device row = panel column.
+function draw(b64) {
+  const bits = atob(b64), d = img.data;
+  for (let y = 0; y < 800; y++) {
+    for (let x = 0; x < 480; x++) {
+      const byte = bits.charCodeAt(x * 100 + (y >> 3));
+      const white = (byte >> (7 - (y & 7))) & 1;
+      const p = (y * 480 + x) * 4, v = white ? 242 : 28;
+      d[p] = v; d[p + 1] = white ? 240 : 30; d[p + 2] = white ? 235 : 34; d[p + 3] = 255;
+    }
+  }
+  ctx2d.putImageData(img, 0, 0);
+  $("screen").classList.remove("refreshing"); void $("screen").offsetWidth; $("screen").classList.add("refreshing");
+}
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    const st = await call("get", "bus", "state");
+    $("vt").textContent = st.virtualTime.toFixed(1) + " s";
+    if (st.value.n !== lastN) {
+      const f = await call("get", "bus", "frame");
+      lastN = f.value.n;
+      $("refreshes").textContent = lastN;
+      if (lastN > 0) draw(f.value.bits);
+    }
+  } catch (e) {}
+  busy = false;
+}
+
+function connect() {
+  ws = new WebSocket(`ws://127.0.0.1:${port}/control`);
+  ws.onopen = () => {
+    setLink("on", "live"); $("err").hidden = true;
+    call("set", "saradc", "ch1", IDLE).catch(() => {});
+    call("set", "saradc", "ch2", IDLE).catch(() => {});
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data), p = pending.get(m.id);
+    if (!p) return;
+    pending.delete(m.id);
+    m.type === "error" ? p.reject(new Error(m.message)) : p.resolve(m);
+  };
+  ws.onclose = () => {
+    setLink("", "waiting for sim");
+    $("err").hidden = false;
+    $("err").textContent = `No simulator on port ${port}. Start it with sim/live.sh.`;
+    pending.forEach((p) => p.reject(new Error("closed"))); pending.clear();
+    setTimeout(connect, 1000);
+  };
+}
+
+function press(name) {
+  const [ch, v] = BTN[name];
+  const el = document.querySelector(`[data-k="${name}"]`);
+  el && el.classList.add("held");
+  call("set", "saradc", "ch" + ch, v).catch(() => {});
+  setTimeout(() => { call("set", "saradc", "ch" + ch, IDLE).catch(() => {}); el && el.classList.remove("held"); }, 300);
+}
+document.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => press(b.dataset.k)));
+function power(ms) {
+  $("power").classList.add("held");
+  call("set", "btn", "level", { line: 0, level: 0 }).catch(() => {});
+  setTimeout(() => { call("set", "btn", "level", { line: 0, level: 1 }).catch(() => {}); $("power").classList.remove("held"); }, ms);
+}
+$("power").addEventListener("click", () => power(300));
+addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  const k = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", Enter: "confirm", Escape: "back", Backspace: "back" }[e.key];
+  if (k) { press(k); e.preventDefault(); }
+});
+
+connect();
+setInterval(poll, 200);
+</script>
+</body>
+</html>

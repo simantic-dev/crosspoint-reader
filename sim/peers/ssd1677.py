@@ -6,7 +6,11 @@
 # RAM bit 1 = white, PBM bit 1 = black, so the dump is inverted. Raw panel orientation (800 wide):
 # convert with frame2png.py --transpose for the X4 as held (480x800).
 # BUSY time is a declared model constant (1.6 s full refresh, 150 ms otherwise), not fitted.
+# Control port: get property "state" ({"n": plain BW refreshes}) or "frame" ({"n", "w": 800, "h": 480, "bits":
+# base64 of the BW plane at the last plain refresh, RAM layout, bit 1 = white}) on the bus peer's board name.
+# A refresh after a custom waveform (0x32, CrossPoint's grayscale pass) does not replace the shown page.
 # Not modelled: grayscale (custom LUT, RED plane composing), waveforms, the temperature/OTP commands.
+import base64
 import os
 
 W, H = 800, 480
@@ -28,7 +32,10 @@ class Slave:
         self.upd = 0xFF
         self.bw = bytearray(b"\xff" * (WB * H))
         self.red = bytearray(b"\xff" * (WB * H))
+        self.lut = False        # a custom waveform (0x32) was written since the last activation
         self.frames = 0
+        self.shown = bytes(self.bw)
+        self.shown_n = 0        # plain BW refreshes: what "state"/"frame" report
         self.path = os.environ.get("EPD_DUMP", "sim/out/epd")
 
     def on_gpio(self, line, level):
@@ -38,6 +45,8 @@ class Slave:
     def on_transmit(self, v):
         if not self.dc:
             self.cmd, self.n = v, 0
+            if v == 0x32:
+                self.lut = True
             if v == 0x12:
                 self.mode, self.upd = 3, 0xFF
             elif v == 0x20:
@@ -85,16 +94,30 @@ class Slave:
         display = bool(self.upd & 0x04)
         if display:
             self.frames += 1
-            print("EPD frame %d at %.3f s" % (self.frames, getattr(self.ctx, "now_us", 0) / 1e6), file=__import__("sys").stderr)
+            # A refresh with a custom waveform (0x32) is CrossPoint's grayscale pass: it drives the BW/RED planes
+            # as an anti-aliasing mask over the page already on the glass. Grayscale is not modelled, so the
+            # page as shown stays the last plain BW refresh.
+            if not self.lut:
+                self.shown = bytes(self.bw)
+                self.shown_n += 1
+            print("EPD frame %d at %.3f s upd=0x%02x lut=%d" % (self.frames, getattr(self.ctx, "now_us", 0) / 1e6, self.upd, self.lut), file=__import__("sys").stderr)
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             with open("%s-%03d.pbm" % (self.path, self.frames), "wb") as f:
                 f.write(b"P4\n%d %d\n" % (W, H))
                 f.write(bytes(b ^ 0xFF for b in self.bw))
+        self.lut = False
         self.ctx.gpio(BUSY_LINE).set(True)
         self.ctx.schedule_oneshot(FULL_US if display else POWER_US, self.on_timer)
 
     def on_timer(self):
         self.ctx.gpio(BUSY_LINE).set(False)
+
+    def get_property(self, name):
+        if name == "state":
+            return {"n": self.shown_n}
+        if name == "frame":
+            return {"n": self.shown_n, "w": W, "h": H, "bits": base64.b64encode(self.shown).decode()}
+        raise KeyError(name)
 
 
 if __name__ == "__main__":

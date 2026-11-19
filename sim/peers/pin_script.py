@@ -45,6 +45,7 @@ class Slave:
         self.ctx = ctx
         self.idle, self.sched = build_schedule(getattr(ctx, "config", {}))
         self.seen = []
+        self.inputs = {}
         for line, level in self.idle.items():
             self._drive(line, level)
         self._arm()
@@ -66,3 +67,16 @@ class Slave:
 
     def on_gpio(self, line, level):
         self.seen.append((self.ctx.now_us, line, bool(level)))
+        self.inputs[str(line)] = int(bool(level))
+
+    # Control port, on the peer's board name: set "level" to {"line": 0, "level": 1} (or "release") to drive a
+    # line now; get "inputs" for the last level seen on each input line (same hooks as sim-fixtures' copy).
+    def set_property(self, name, value):
+        if name != "level":
+            raise KeyError(name)
+        self._drive(int(value["line"]), _level(value["level"]))
+
+    def get_property(self, name):
+        if name != "inputs":
+            raise KeyError(name)
+        return self.inputs

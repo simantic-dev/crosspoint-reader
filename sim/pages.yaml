@@ -1,0 +1,11 @@
+# Deterministic walkthrough, no control port and no wall clock: the front buttons are scripted ADC voltages in
+# virtual time (OK at 4 s and 7 s opens demo.epub, Right at 22 s and 30 s turns two pages). Runs unpaced.
+machines:
+  x4:
+    mcu: ESP32-C3
+    elf: ../.pio/build/default/firmware.factory.bin
+    overlay: x4.board
+    analog:
+      - {adc: saradc, channel: 1, points: [[0, 3.3], [4.0, 3.3], [4.001, 2.17], [4.4, 2.17], [4.401, 3.3], [7.0, 3.3], [7.001, 2.17], [7.4, 2.17], [7.401, 3.3], [22.0, 3.3], [22.001, 0], [22.4, 0], [22.401, 3.3], [30.0, 3.3], [30.001, 0], [30.4, 0], [30.401, 3.3]]}
+      - {adc: saradc, channel: 2, points: [[0, 3.3]]}
+timeout: 40
