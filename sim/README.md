@@ -39,7 +39,19 @@ flowchart LR
 ```sh
 sim/build.sh        # PlatformIO build of the unmodified default env
 sim/run.sh          # ~40 s wall: boots, presses buttons, converts frames to PNG in sim/out/, checks activities
+sim/live.sh         # interactive: opens sim/reader.html, the panel and the buttons live over the control port
+sim pages           # `sim run --scenario sim/pages.yaml`: opens demo.epub and turns two pages in virtual time
 ```
+
+**Live reader** (`sim/live.sh`, `sim/reader.html`): the panel as shown and the front and power buttons, in the
+browser. Arrow keys turn pages, Enter is OK, Esc is Back. The page is the panel's BW plane at its last plain
+refresh. A refresh after a custom waveform (0x32) is CrossPoint's grayscale pass, an anti-aliasing mask over the
+page, so it is not shown (grayscale is not modelled). `sim/pages.yaml` presses the same buttons as scripted ADC
+voltages in virtual time, so it does not depend on host load the way `run.sh`'s wall-clock presses do.
+
+Build note (2026-11-19): with a fresh `PLATFORMIO_CORE_DIR` the platform's penv pulls PlatformIO 6.2.0 and the
+SCons packages fight mid-build (`No module named 'SCons.Tool.FortranCommon'`, pioarduino/platform-espressif32#529).
+Pin it as upstream CI does: `<core>/penv/bin/python -m pip install "pioarduino==6.1.19"`, then build again.
 
 **What runs** (`sim` 0.10.0, build f219eb31, `develop` 5c37b123 plus `sim/`, 2026-11-16):
 
