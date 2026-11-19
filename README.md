@@ -1,5 +1,9 @@
 # CrossPoint Reader
 
+<!-- simantic-banner -->
+> **Run this firmware with no hardware.** [Simantic](https://simantic.com) simulates the whole board, peripherals, sensors and buses included. Try it free at **[simantic.com](https://simantic.com)**, or run it locally: `curl -fsSL https://simantic.com/install | sh`
+
+
 > **Simulator showcase:** this fork runs the firmware on a simulated ESP32-C3 with a simulated SD card, e-paper panel and
 > buttons: home screen, file browser, EPUB reader with page turns. See [sim/README.md](sim/README.md).
 >
